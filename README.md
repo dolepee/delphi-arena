@@ -23,6 +23,7 @@ npm test
 npm run snapshot
 npm run sources
 npm run readiness
+npm run preview
 npm run monitor
 ```
 

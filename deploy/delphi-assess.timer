@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh deterministic Delphi assessments every two minutes
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=2min
+RandomizedDelaySec=10s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

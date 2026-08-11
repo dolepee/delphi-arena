@@ -3,7 +3,8 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { loadAssessments, loadPolicy, stateDirectory } from "./config.js";
 import { TradeLedger } from "./ledger.js";
-import { orderBudget, selectCandidates, validateQuote } from "./planner.js";
+import { orderBudget, selectCandidates } from "./planner.js";
+import { findQuotedPlan } from "./quote-plan.js";
 import { assertWriteReadiness, readBook } from "./runtime.js";
 import { sendAlert } from "./alerts.js";
 
@@ -31,22 +32,8 @@ export async function runTradingCycle(client: DelphiClient, now = Date.now()) {
       existingMarketValueTst: candidate.existingMarketValue,
       mode,
     });
-    let shares = Math.floor((budgetTst / Math.max(candidate.spotPrice, 0.01)) * 100) / 100;
-    for (let attempt = 0; attempt < 18 && shares >= 0.01; attempt += 1) {
-      const { tokensIn } = await client.quoteBuy({
-        marketAddress: candidate.market.id,
-        outcomeIdx: candidate.assessment.outcomeIndex,
-        sharesOut: sharesToRaw(shares),
-      });
-      const plan = validateQuote({
-        candidate,
-        policy,
-        shares,
-        quotedCostTst: Number(tokensIn) / 1e6,
-        budgetTst,
-        mode,
-      });
-      if (plan) {
+    const plan = await findQuotedPlan({ client, candidate, policy, budgetTst, mode });
+    if (plan) {
         if (await ledger.get(plan.decisionId)) return { status: "DEDUPLICATED" as const, decisionId: plan.decisionId };
         await ledger.prepare({
           decisionId: plan.decisionId,
@@ -79,8 +66,6 @@ export async function runTradingCycle(client: DelphiClient, now = Date.now()) {
         }
         await sendAlert("POSITION OPENED", `${plan.market.question}\n${plan.market.outcomes[plan.assessment.outcomeIndex]} | ${plan.shares} shares | ${plan.quotedCostTst.toFixed(4)} TST | net edge ${(plan.netEdge * 100).toFixed(2)}%\n${result.transactionHash}`);
         return { status: "TRADED" as const, plan, transactionHash: result.transactionHash };
-      }
-      shares = Math.floor((shares / 2) * 100) / 100;
     }
   }
   return { status: "NO_TRADE" as const, reason: "all quotes failed edge, impact, or allocation limits" };

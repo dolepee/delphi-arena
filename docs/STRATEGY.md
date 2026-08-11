@@ -18,3 +18,5 @@ Earn test-token PnL by acting on authoritative information before a shallow LMSR
 ## Priority
 
 Deterministic official releases and observable events have priority over forecasts. Before resolution, position size reflects uncertainty and LMSR depth. After a decisive primary-source release, speed and source integrity matter more than narrative complexity.
+
+The first locked forecast adapter is the NSIDC Arctic-extent market. It uses the latest official extent and the trailing 46 observations, applies only same-horizon historical changes, and estimates the threshold probability with Laplace smoothing. The rule, 8-point net-edge floor, and allocation limits were committed before organizer funding arrived.
