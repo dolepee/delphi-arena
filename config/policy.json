@@ -1,0 +1,16 @@
+{
+  "competitionEndsAt": "2026-08-24T13:00:00.000Z",
+  "minimumStartingTst": 1000,
+  "minimumGasEth": 0.001,
+  "minimumNetEdge": 0.08,
+  "maximumMarketAllocationPct": 35,
+  "maximumPortfolioAllocationPct": 90,
+  "maximumOrderTst": 250,
+  "maximumPriceImpact": 0.04,
+  "slippagePct": 2,
+  "maximumNewTradesPerCycle": 1,
+  "minimumEvidenceSources": 1,
+  "maximumAssessmentAgeMinutes": 30,
+  "canaryMaximumTst": 1,
+  "qualificationFallback": "none"
+}

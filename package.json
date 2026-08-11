@@ -1,0 +1,31 @@
+{
+  "name": "delphi-arena",
+  "version": "1.0.0",
+  "description": "Source-first autonomous agent for the Delphi Agent Arena Competition",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "snapshot": "tsx src/cli/snapshot.ts",
+    "sources": "tsx src/cli/sources.ts",
+    "readiness": "tsx src/cli/readiness.ts",
+    "monitor": "tsx src/cli/monitor.ts",
+    "cycle": "tsx src/cli/run-cycle.ts",
+    "settle": "tsx src/cli/settle.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "UNLICENSED",
+  "private": true,
+  "dependencies": {
+    "@gensyn-ai/gensyn-delphi-sdk": "2.1.0",
+    "dotenv": "^17.2.3",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}
