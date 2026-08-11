@@ -1,0 +1,11 @@
+[Unit]
+Description=Run guarded Delphi Arena cycle every minute
+
+[Timer]
+OnUnitActiveSec=1min
+RandomizedDelaySec=5s
+Persistent=false
+
+[Install]
+WantedBy=timers.target
+

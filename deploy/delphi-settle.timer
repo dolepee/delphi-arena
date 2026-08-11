@@ -1,0 +1,10 @@
+[Unit]
+Description=Sweep Delphi Arena terminal positions every ten minutes
+
+[Timer]
+OnUnitActiveSec=10min
+RandomizedDelaySec=20s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

@@ -19,6 +19,8 @@ The VPS observer is read-only. It snapshots markets and balances, probes officia
 4. Verify the transaction, resulting position, quote bounds, ledger record, and leaderboard recognition.
 5. The runtime writes `canary-complete.json` and blocks all additional entries.
 
+The static `delphi-cycle.service` may be installed in advance, but `delphi-cycle.timer` must remain disabled through the canary. The settlement timer must also remain disabled until a confirmed position exists.
+
 ## Full-live gate
 
 Create `/var/lib/delphi-arena/full-live-approved.json` only after a separate approval following canary verification. Enable the trading timer only after that file exists. Never add a trade solely to satisfy an unpublished activity threshold.

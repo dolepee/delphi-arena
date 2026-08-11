@@ -1,0 +1,18 @@
+[Unit]
+Description=Delphi Arena guarded redemption and liquidation sweep
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=delphi
+Group=delphi
+WorkingDirectory=/opt/delphi-arena/current
+EnvironmentFile=/etc/delphi-arena/delphi.env
+ExecStart=/usr/bin/npm run settle
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/delphi-arena
+
