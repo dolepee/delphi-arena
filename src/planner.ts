@@ -3,6 +3,12 @@ import type { Assessment, Candidate, MarketView, Policy, PositionView, QuotedPla
 
 const confidenceWeight = { high: 1, medium: 0.7, low: 0.35 } as const;
 
+function minimumNetEdge(assessment: Assessment, policy: Policy): number {
+  if (assessment.evidenceClass === "published_result") return policy.minimumPublishedResultNetEdge;
+  if (assessment.evidenceClass === "official_schedule") return policy.minimumOfficialScheduleNetEdge;
+  return policy.minimumNetEdge;
+}
+
 export function selectCandidates(input: {
   now: number;
   policy: Policy;
@@ -38,10 +44,7 @@ export function selectCandidates(input: {
       0,
     );
     const rawEdge = assessment.probability - spotPrice;
-    const minimumNetEdge = assessment.evidenceClass === "published_result"
-      ? input.policy.minimumPublishedResultNetEdge
-      : input.policy.minimumNetEdge;
-    if (rawEdge < minimumNetEdge) return [];
+    if (rawEdge < minimumNetEdge(assessment, input.policy)) return [];
     return [{ assessment, market, spotPrice, rawEdge, existingMarketValue }];
   }).sort((left, right) =>
     right.rawEdge * confidenceWeight[right.assessment.confidence] -
@@ -75,10 +78,10 @@ export function validateQuote(input: {
   const feePerShare = averagePrice * input.candidate.market.tradingFeePct / 100;
   const netEdge = input.candidate.assessment.probability - averagePrice - feePerShare;
   const priceImpact = averagePrice - input.candidate.spotPrice;
-  const minimumNetEdge = input.candidate.assessment.evidenceClass === "published_result"
-    ? input.policy.minimumPublishedResultNetEdge
-    : input.policy.minimumNetEdge;
-  if (netEdge < minimumNetEdge || priceImpact > input.policy.maximumPriceImpact) return null;
+  if (
+    netEdge < minimumNetEdge(input.candidate.assessment, input.policy) ||
+    priceImpact > input.policy.maximumPriceImpact
+  ) return null;
   const maximumCostTst = input.quotedCostTst * (1 + input.policy.slippagePct / 100);
   if (maximumCostTst > input.budgetTst) return null;
   return {

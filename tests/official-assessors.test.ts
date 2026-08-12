@@ -1,6 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MarketView } from "../src/model.js";
-import { assessArcticExtent, assessSilsoSunspot } from "../src/official-assessors.js";
+import {
+  assessArcticExtent,
+  assessCrs35Schedule,
+  assessSilsoSunspot,
+  generateOfficialAssessments,
+} from "../src/official-assessors.js";
+
+afterEach(() => vi.unstubAllGlobals());
 
 const MARKET: MarketView = {
   id: "0x1111111111111111111111111111111111111111",
@@ -90,5 +97,49 @@ describe("SILSO exact release assessment", () => {
     });
     expect(assessment?.outcomeIndex).toBe(1);
     expect(assessment?.probability).toBe(0.99);
+  });
+});
+
+const CRS_MARKET: MarketView = {
+  id: "0x3333333333333333333333333333333333333333",
+  question: "Will SpaceX launch the Dragon CRS-35 cargo mission before 00:00 UTC on Aug 14, 2026?",
+  outcomes: ["Yes", "No"],
+  status: "open",
+  resolvesAt: "2026-08-14T03:59:00.000Z",
+  prices: [0.1, 0.9],
+  tradingFeePct: 0.5,
+  dataSources: [],
+};
+
+describe("NASA CRS-35 official schedule assessment", () => {
+  const sourceUrl = "https://www.nasa.gov/event/nasas-spacex-crs-35/";
+  const now = Date.parse("2026-08-12T14:00:00.000Z");
+
+  it("selects No only when the official event date is after the deadline", () => {
+    const body = '<h1>NASA’s SpaceX CRS-35</h1><span data-event-start-date="2026-12-31T23:59:00-05:00">No Earlier Than Fall 2026</span>';
+    const assessment = assessCrs35Schedule({ market: CRS_MARKET, body, sourceUrl, now });
+    expect(assessment?.outcomeIndex).toBe(1);
+    expect(assessment?.evidenceClass).toBe("official_schedule");
+    expect(assessment?.probability).toBe(0.99);
+    expect(assessment?.sources[0]?.valueHash).toMatch(/^[0-9a-f]{64}$/u);
+  });
+
+  it.each([
+    '<h1>NASA’s SpaceX CRS-35</h1><span data-event-start-date="2026-12-31T23:59:00-05:00">Schedule pending</span>',
+    '<h1>NASA’s SpaceX CRS-35</h1><span>No Earlier Than Fall 2026</span>',
+    '<h1>NASA’s SpaceX CRS-35</h1><span data-event-start-date="2026-08-13T23:00:00Z">No Earlier Than Fall 2026</span>',
+  ])("refuses missing or contradictory schedule evidence", (body) => {
+    expect(assessCrs35Schedule({ market: CRS_MARKET, body, sourceUrl, now })).toBeNull();
+  });
+
+  it("isolates a failed source so another market can still be assessed", async () => {
+    const body = '<h1>NASA’s SpaceX CRS-35</h1><span data-event-start-date="2026-12-31T23:59:00-05:00">No Earlier Than Fall 2026</span>';
+    vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request) => {
+      if (String(url).includes("sidc.be")) throw new Error("source timeout");
+      return new Response(body, { status: 200 });
+    }));
+    const assessments = await generateOfficialAssessments([SILSO_MARKET, CRS_MARKET], now);
+    expect(assessments).toHaveLength(1);
+    expect(assessments[0]?.marketId).toBe(CRS_MARKET.id);
   });
 });

@@ -4,6 +4,7 @@
   "minimumGasEth": 0.001,
   "minimumNetEdge": 0.08,
   "minimumPublishedResultNetEdge": 0.02,
+  "minimumOfficialScheduleNetEdge": 0.04,
   "maximumMarketAllocationPct": 35,
   "maximumPortfolioAllocationPct": 90,
   "maximumOrderTst": 250,

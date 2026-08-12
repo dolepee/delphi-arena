@@ -8,6 +8,7 @@ export const policySchema = z.object({
   minimumGasEth: z.number().positive(),
   minimumNetEdge: z.number().positive().max(0.5),
   minimumPublishedResultNetEdge: z.number().positive().max(0.1),
+  minimumOfficialScheduleNetEdge: z.number().positive().max(0.1),
   maximumMarketAllocationPct: z.number().positive().max(50),
   maximumPortfolioAllocationPct: z.number().positive().max(95),
   maximumOrderTst: z.number().positive(),
@@ -33,7 +34,7 @@ export const evidenceSourceSchema = z.object({
 export const assessmentSchema = z.object({
   marketId: addressSchema,
   outcomeIndex: z.number().int().nonnegative(),
-  evidenceClass: z.enum(["forecast", "published_result"]),
+  evidenceClass: z.enum(["forecast", "official_schedule", "published_result"]),
   probability: z.number().min(0.01).max(0.99),
   confidence: z.enum(["high", "medium", "low"]),
   status: z.enum(["actionable", "watch", "refuse"]),

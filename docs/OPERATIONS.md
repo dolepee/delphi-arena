@@ -2,7 +2,7 @@
 
 ## Current state
 
-The VPS observer is read-only. It snapshots markets and balances, probes official sources, and alerts once when organizer TST funding appears. Trading is not enabled by deployment.
+The funded canary and leaderboard-recognition checks completed on August 12. Full-live trading and settlement are active on the VPS under systemd timers. The runtime still requires the protected live confirmation plus the canary and full-live approval records on every write path.
 
 ## Funding gate
 

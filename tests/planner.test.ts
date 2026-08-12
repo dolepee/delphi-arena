@@ -9,6 +9,7 @@ const POLICY: Policy = {
   minimumGasEth: 0.001,
   minimumNetEdge: 0.08,
   minimumPublishedResultNetEdge: 0.02,
+  minimumOfficialScheduleNetEdge: 0.04,
   maximumMarketAllocationPct: 35,
   maximumPortfolioAllocationPct: 90,
   maximumOrderTst: 250,
@@ -110,6 +111,26 @@ describe("LMSR quote and allocation controls", () => {
       positions: [],
       assessments: [{ ...released, evidenceClass: "forecast" }],
     })).toHaveLength(0);
+  });
+
+  it("uses an intermediate floor for decisive official schedules", () => {
+    const scheduled = { ...ASSESSMENT, evidenceClass: "official_schedule" as const, probability: 0.99 };
+    const [candidate] = selectCandidates({
+      now: NOW,
+      policy: POLICY,
+      markets: [{ ...MARKET, prices: [0.94, 0.06] }],
+      positions: [],
+      assessments: [scheduled],
+    });
+    expect(candidate).toBeDefined();
+    expect(validateQuote({
+      candidate: candidate!,
+      policy: POLICY,
+      shares: 10,
+      quotedCostTst: 9.45,
+      budgetTst: 10,
+      mode: "full",
+    })).not.toBeNull();
   });
 
   it("caps the canary and full allocation independently", () => {
