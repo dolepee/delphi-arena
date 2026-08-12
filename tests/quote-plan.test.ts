@@ -4,14 +4,14 @@ import { findQuotedPlan } from "../src/quote-plan.js";
 
 const policy: Policy = {
   competitionEndsAt: "2026-08-24T13:00:00.000Z", minimumStartingTst: 1000, minimumGasEth: 0.001,
-  minimumNetEdge: 0.08, maximumMarketAllocationPct: 35, maximumPortfolioAllocationPct: 90,
+  minimumNetEdge: 0.08, minimumPublishedResultNetEdge: 0.02, maximumMarketAllocationPct: 35, maximumPortfolioAllocationPct: 90,
   maximumOrderTst: 250, maximumPriceImpact: 0.04, slippagePct: 2, maximumNewTradesPerCycle: 1,
   minimumEvidenceSources: 1, maximumAssessmentAgeMinutes: 30, canaryMaximumTst: 1, qualificationFallback: "none",
 };
 const candidate = {
   spotPrice: 0.6, rawEdge: 0.3, existingMarketValue: 0,
   market: { id: "0x1111111111111111111111111111111111111111", question: "q", outcomes: ["Yes", "No"], status: "open", resolvesAt: "2026-08-13T00:00:00.000Z", prices: [0.6, 0.4], tradingFeePct: 0.5, dataSources: [] },
-  assessment: { marketId: "0x1111111111111111111111111111111111111111", outcomeIndex: 0, probability: 0.9, confidence: "high", status: "actionable", observedAt: "2026-08-12T11:50:00.000Z", expiresAt: "2026-08-12T12:20:00.000Z", rationale: "Official evidence creates a measurable edge.", sources: [{ url: "https://example.com", kind: "authoritative", observedAt: "2026-08-12T11:50:00.000Z", valueHash: "a".repeat(64) }] },
+  assessment: { marketId: "0x1111111111111111111111111111111111111111", outcomeIndex: 0, evidenceClass: "forecast", probability: 0.9, confidence: "high", status: "actionable", observedAt: "2026-08-12T11:50:00.000Z", expiresAt: "2026-08-12T12:20:00.000Z", rationale: "Official evidence creates a measurable edge.", sources: [{ url: "https://example.com", kind: "authoritative", observedAt: "2026-08-12T11:50:00.000Z", valueHash: "a".repeat(64) }] },
 } satisfies Candidate;
 
 describe("binary LMSR quote search", () => {

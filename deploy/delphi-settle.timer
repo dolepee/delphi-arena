@@ -2,6 +2,7 @@
 Description=Sweep Delphi Arena terminal positions every ten minutes
 
 [Timer]
+OnActiveSec=2min
 OnUnitActiveSec=10min
 RandomizedDelaySec=20s
 Persistent=false

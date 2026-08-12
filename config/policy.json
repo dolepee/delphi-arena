@@ -3,6 +3,7 @@
   "minimumStartingTst": 1000,
   "minimumGasEth": 0.001,
   "minimumNetEdge": 0.08,
+  "minimumPublishedResultNetEdge": 0.02,
   "maximumMarketAllocationPct": 35,
   "maximumPortfolioAllocationPct": 90,
   "maximumOrderTst": 250,

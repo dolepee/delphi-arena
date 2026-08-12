@@ -8,7 +8,8 @@ Registered wallet: `0x86bE235Bb9Aa6D9E2Cf89b2f4E9c90e1ecb7C781`
 
 - Competition network and registered signer are checked on every command.
 - An actionable assessment must be fresh, unexpired, and include an authoritative source hash.
-- A trade must retain at least 8 percentage points of net edge after quoted LMSR impact and fees.
+- A forecast must retain at least 8 percentage points of net edge after quoted LMSR impact and fees.
+- An exact result already published by the organizer-named source must retain at least 2 percentage points; forecasts cannot use this tighter floor.
 - Market, portfolio, order, slippage, and price-impact caps are enforced before signing.
 - A prepared intent is written before the approval or buy transaction. Any uncertain write blocks further writes.
 - Runtime starts write-disabled. Canary mode additionally requires the exact live confirmation and an operator-created approval file.

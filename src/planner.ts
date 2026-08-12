@@ -38,7 +38,10 @@ export function selectCandidates(input: {
       0,
     );
     const rawEdge = assessment.probability - spotPrice;
-    if (rawEdge < input.policy.minimumNetEdge) return [];
+    const minimumNetEdge = assessment.evidenceClass === "published_result"
+      ? input.policy.minimumPublishedResultNetEdge
+      : input.policy.minimumNetEdge;
+    if (rawEdge < minimumNetEdge) return [];
     return [{ assessment, market, spotPrice, rawEdge, existingMarketValue }];
   }).sort((left, right) =>
     right.rawEdge * confidenceWeight[right.assessment.confidence] -
@@ -72,7 +75,10 @@ export function validateQuote(input: {
   const feePerShare = averagePrice * input.candidate.market.tradingFeePct / 100;
   const netEdge = input.candidate.assessment.probability - averagePrice - feePerShare;
   const priceImpact = averagePrice - input.candidate.spotPrice;
-  if (netEdge < input.policy.minimumNetEdge || priceImpact > input.policy.maximumPriceImpact) return null;
+  const minimumNetEdge = input.candidate.assessment.evidenceClass === "published_result"
+    ? input.policy.minimumPublishedResultNetEdge
+    : input.policy.minimumNetEdge;
+  if (netEdge < minimumNetEdge || priceImpact > input.policy.maximumPriceImpact) return null;
   const maximumCostTst = input.quotedCostTst * (1 + input.policy.slippagePct / 100);
   if (maximumCostTst > input.budgetTst) return null;
   return {

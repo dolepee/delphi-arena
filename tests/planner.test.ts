@@ -8,6 +8,7 @@ const POLICY: Policy = {
   minimumStartingTst: 1000,
   minimumGasEth: 0.001,
   minimumNetEdge: 0.08,
+  minimumPublishedResultNetEdge: 0.02,
   maximumMarketAllocationPct: 35,
   maximumPortfolioAllocationPct: 90,
   maximumOrderTst: 250,
@@ -32,6 +33,7 @@ const MARKET: MarketView = {
 const ASSESSMENT: Assessment = {
   marketId: MARKET.id,
   outcomeIndex: 0,
+  evidenceClass: "forecast",
   probability: 0.85,
   confidence: "high",
   status: "actionable",
@@ -80,6 +82,33 @@ describe("LMSR quote and allocation controls", () => {
 
   it("rejects a quote whose average execution destroys the edge", () => {
     expect(validateQuote({ candidate, policy: POLICY, shares: 10, quotedCostTst: 7.8, budgetTst: 10, mode: "full" })).toBeNull();
+  });
+
+  it("uses the tighter published-result floor only for exact official releases", () => {
+    const released = { ...ASSESSMENT, evidenceClass: "published_result" as const, probability: 0.99 };
+    const [releasedCandidate] = selectCandidates({
+      now: NOW,
+      policy: POLICY,
+      markets: [{ ...MARKET, prices: [0.95, 0.05] }],
+      positions: [],
+      assessments: [released],
+    });
+    expect(releasedCandidate).toBeDefined();
+    expect(validateQuote({
+      candidate: releasedCandidate!,
+      policy: POLICY,
+      shares: 10,
+      quotedCostTst: 9.55,
+      budgetTst: 10,
+      mode: "full",
+    })).not.toBeNull();
+    expect(selectCandidates({
+      now: NOW,
+      policy: POLICY,
+      markets: [{ ...MARKET, prices: [0.95, 0.05] }],
+      positions: [],
+      assessments: [{ ...released, evidenceClass: "forecast" }],
+    })).toHaveLength(0);
   });
 
   it("caps the canary and full allocation independently", () => {

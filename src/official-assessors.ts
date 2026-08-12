@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { Assessment, MarketView } from "./model.js";
 
 const ARCTIC_PATTERN = /NSIDC Arctic sea ice extent for (\d{4}-\d{2}-\d{2}).*below ([0-9.]+) million km²/iu;
+const SILSO_PATTERN = /SILSO estimated sunspot number for (\d{4}-\d{2}-\d{2}) UTC be ([0-9.]+) or higher/iu;
 
 function utcDay(value: string): number {
   return Date.parse(`${value}T00:00:00.000Z`) / 86_400_000;
@@ -49,6 +50,7 @@ export function assessArcticExtent(input: {
   return {
     marketId: input.market.id,
     outcomeIndex: 0,
+    evidenceClass: horizonDays === 0 ? "published_result" : "forecast",
     probability,
     confidence: probability >= 0.85 || probability <= 0.15 ? "high" : "medium",
     status: "actionable",
@@ -64,17 +66,69 @@ export function assessArcticExtent(input: {
   };
 }
 
+export function assessSilsoSunspot(input: {
+  market: MarketView;
+  body: string;
+  sourceUrl: string;
+  now: number;
+}): Assessment | null {
+  const match = SILSO_PATTERN.exec(input.market.question);
+  if (!match || input.now >= Date.parse(input.market.resolvesAt ?? "1970-01-01")) return null;
+  const targetDate = match[1]!;
+  const threshold = Number(match[2]);
+  const targetParts = targetDate.split("-").map(Number);
+  const row = input.body.split(/\r?\n/u).map((line) => line.split(",").map((part) => part.trim()))
+    .find((parts) =>
+      Number(parts[0]) === targetParts[0] &&
+      Number(parts[1]) === targetParts[1] &&
+      Number(parts[2]) === targetParts[2]
+    );
+  const value = Number(row?.[4]);
+  if (!row || !Number.isFinite(value)) return null;
+
+  const conditionMet = value >= threshold;
+  const observedAt = new Date(input.now).toISOString();
+  const expiry = Math.min(input.now + 10 * 60_000, Date.parse(input.market.resolvesAt!));
+  if (expiry <= input.now) return null;
+  return {
+    marketId: input.market.id,
+    outcomeIndex: conditionMet ? 0 : 1,
+    evidenceClass: "published_result",
+    probability: 0.99,
+    confidence: "high",
+    status: "actionable",
+    observedAt,
+    expiresAt: new Date(expiry).toISOString(),
+    rationale: `SILSO now reports an estimated sunspot number of ${value} for ${targetDate}; the contract threshold is ${threshold} or higher.`,
+    sources: [{
+      url: input.sourceUrl,
+      kind: "authoritative",
+      observedAt,
+      valueHash: createHash("sha256").update(input.body).digest("hex"),
+    }],
+  };
+}
+
 export async function generateOfficialAssessments(markets: MarketView[], now = Date.now()): Promise<Assessment[]> {
   const assessments: Assessment[] = [];
   for (const market of markets) {
-    if (!ARCTIC_PATTERN.test(market.question)) continue;
-    const sourceUrl = "https://nsidc.org/api/seaiceservice/extent/north/filled_averaged_data/2026?smoothing_window=0";
+    let sourceUrl: string;
+    let assessor: (input: { market: MarketView; body: string; sourceUrl: string; now: number }) => Assessment | null;
+    if (ARCTIC_PATTERN.test(market.question)) {
+      sourceUrl = "https://nsidc.org/api/seaiceservice/extent/north/filled_averaged_data/2026?smoothing_window=0";
+      assessor = assessArcticExtent;
+    } else if (SILSO_PATTERN.test(market.question)) {
+      sourceUrl = "https://www.sidc.be/SILSO/DATA/EISN/EISN_current.csv";
+      assessor = assessSilsoSunspot;
+    } else {
+      continue;
+    }
     const response = await fetch(sourceUrl, {
       headers: { "user-agent": "Conviction-Delphi-Arena/1.0" },
       signal: AbortSignal.timeout(15_000),
     });
     if (!response.ok) continue;
-    const assessment = assessArcticExtent({ market, body: await response.text(), sourceUrl, now });
+    const assessment = assessor({ market, body: await response.text(), sourceUrl, now });
     if (assessment) assessments.push(assessment);
   }
   return assessments;
