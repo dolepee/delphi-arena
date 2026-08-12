@@ -17,6 +17,8 @@ Earn test-token PnL by acting on authoritative information before a shallow LMSR
 
 Forecasts and published results are separate evidence classes. Forecasts retain the locked 8-point net-edge floor. A published result may use the 2-point floor only when the organizer-named authoritative source contains the exact target-date value and the adapter deterministically maps it to the contract outcome.
 
+Full-live residual capacity below 5 TST is ignored. This prevents repeated dust top-ups when a refreshed mark price moves the percentage-based market cap by a negligible amount.
+
 ## Priority
 
 Deterministic official releases and observable events have priority over forecasts. Before resolution, position size reflects uncertainty and LMSR depth. After a decisive primary-source release, speed and source integrity matter more than narrative complexity.

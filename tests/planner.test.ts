@@ -12,6 +12,7 @@ const POLICY: Policy = {
   maximumMarketAllocationPct: 35,
   maximumPortfolioAllocationPct: 90,
   maximumOrderTst: 250,
+  minimumFullOrderTst: 5,
   maximumPriceImpact: 0.04,
   slippagePct: 2,
   maximumNewTradesPerCycle: 1,
@@ -115,5 +116,10 @@ describe("LMSR quote and allocation controls", () => {
     expect(orderBudget({ policy: POLICY, totalEquityTst: 1000, availableTst: 1000, deployedValueTst: 0, existingMarketValueTst: 0, mode: "canary" })).toBe(1);
     expect(orderBudget({ policy: POLICY, totalEquityTst: 1000, availableTst: 1000, deployedValueTst: 0, existingMarketValueTst: 0, mode: "full" })).toBe(250);
     expect(orderBudget({ policy: POLICY, totalEquityTst: 1000, availableTst: 1000, deployedValueTst: 890, existingMarketValueTst: 0, mode: "full" })).toBe(10);
+  });
+
+  it("blocks full-live dust while preserving the bounded canary", () => {
+    expect(orderBudget({ policy: POLICY, totalEquityTst: 1000, availableTst: 4.99, deployedValueTst: 0, existingMarketValueTst: 0, mode: "full" })).toBe(0);
+    expect(orderBudget({ policy: POLICY, totalEquityTst: 1000, availableTst: 1, deployedValueTst: 0, existingMarketValueTst: 0, mode: "canary" })).toBe(1);
   });
 });

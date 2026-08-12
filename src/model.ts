@@ -11,6 +11,7 @@ export const policySchema = z.object({
   maximumMarketAllocationPct: z.number().positive().max(50),
   maximumPortfolioAllocationPct: z.number().positive().max(95),
   maximumOrderTst: z.number().positive(),
+  minimumFullOrderTst: z.number().positive().max(25),
   maximumPriceImpact: z.number().positive().max(0.2),
   slippagePct: z.number().positive().max(5),
   maximumNewTradesPerCycle: z.literal(1),

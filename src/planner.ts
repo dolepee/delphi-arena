@@ -105,5 +105,7 @@ export function orderBudget(input: {
   const marketRoom = input.totalEquityTst * input.policy.maximumMarketAllocationPct / 100 - input.existingMarketValueTst;
   const portfolioRoom = input.totalEquityTst * input.policy.maximumPortfolioAllocationPct / 100 - input.deployedValueTst;
   const modeCap = input.mode === "canary" ? input.policy.canaryMaximumTst : input.policy.maximumOrderTst;
-  return Math.max(0, Math.min(input.availableTst, marketRoom, portfolioRoom, modeCap));
+  const budget = Math.max(0, Math.min(input.availableTst, marketRoom, portfolioRoom, modeCap));
+  if (input.mode === "full" && budget < input.policy.minimumFullOrderTst) return 0;
+  return budget;
 }

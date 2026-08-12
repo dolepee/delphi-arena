@@ -7,6 +7,7 @@
   "maximumMarketAllocationPct": 35,
   "maximumPortfolioAllocationPct": 90,
   "maximumOrderTst": 250,
+  "minimumFullOrderTst": 5,
   "maximumPriceImpact": 0.04,
   "slippagePct": 2,
   "maximumNewTradesPerCycle": 1,
