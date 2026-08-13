@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Assessment, PositionView } from "../src/model.js";
-import { assessmentForPosition, bestAlternativeForMarket, exitReason, isPastMarketResolution, positionLedgerGeneration, postExitBookForRotation, remainingAverageCostPerShare, withoutConflictingPublishedResults } from "../src/position-manager.js";
+import { assessmentForPosition, bestAlternativeForMarket, conflictingPublishedResultMarketIds, exitReason, isPastMarketResolution, positionLedgerGeneration, postExitBookForRotation, remainingAverageCostPerShare, withoutConflictingPublishedResults } from "../src/position-manager.js";
 
 const position: PositionView = {
   marketId: "0x1111111111111111111111111111111111111111",
@@ -214,6 +214,19 @@ describe("rotation alternative selection", () => {
       { market, assessment: { ...assessment, outcomeIndex: 1 } },
     ];
     expect(withoutConflictingPublishedResults(candidates)).toEqual([]);
+  });
+
+  it("detects contradictory results before edge selection", () => {
+    const results = [
+      { ...assessment, evidenceClass: "published_result" as const, probability: 0.99 },
+      { ...assessment, outcomeIndex: 1, evidenceClass: "published_result" as const, probability: 0.99 },
+    ];
+    expect(conflictingPublishedResultMarketIds({
+      assessments: results,
+      markets: [{ id: position.marketId, outcomes: ["Yes", "No"], prices: [0.99, 0.01] }],
+      policy: { minimumEvidenceSources: 1, maximumAssessmentAgeMinutes: 30 } as never,
+      now: Date.parse("2026-08-13T20:01:00.000Z"),
+    }).has(position.marketId.toLowerCase())).toBe(true);
   });
 
   it("uses the strongest different market when the global best is the current one", () => {

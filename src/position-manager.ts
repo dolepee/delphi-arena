@@ -60,6 +60,32 @@ export function withoutConflictingPublishedResults<T extends {
   );
 }
 
+export function conflictingPublishedResultMarketIds(input: {
+  assessments: Assessment[];
+  markets: Array<{ id: string; outcomes: string[]; prices: number[] }>;
+  policy: Awaited<ReturnType<typeof loadPolicy>>;
+  now: number;
+}): Set<string> {
+  const markets = new Map(input.markets.map((market) => [market.id.toLowerCase(), market]));
+  const outcomes = new Map<string, Set<number>>();
+  for (const assessment of input.assessments) {
+    const key = assessment.marketId.toLowerCase();
+    const market = markets.get(key);
+    if (
+      !market ||
+      assessment.evidenceClass !== "published_result" ||
+      assessment.confidence !== "high" ||
+      market.outcomes[assessment.outcomeIndex] === undefined ||
+      market.prices[assessment.outcomeIndex] === undefined ||
+      !isAssessmentEvidenceValid({ assessment, policy: input.policy, now: input.now })
+    ) continue;
+    const set = outcomes.get(key) ?? new Set<number>();
+    set.add(assessment.outcomeIndex);
+    outcomes.set(key, set);
+  }
+  return new Set([...outcomes.entries()].filter(([, values]) => values.size > 1).map(([key]) => key));
+}
+
 export function exitReason(input: {
   position: PositionView;
   assessment: Assessment;
@@ -219,6 +245,9 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
       entrySlippagePct: policy.slippagePct,
     });
     const postExitBook = postExitBookForRotation(book, position, minimumProceedsTst);
+    const conflictingResultMarkets = conflictingPublishedResultMarketIds({
+      assessments, markets: postExitBook.markets, policy, now,
+    });
     const resultCandidates = withoutConflictingPublishedResults(selectCandidates({
       now,
       policy,
@@ -228,6 +257,7 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
     }).filter((candidate) =>
       candidate.assessment.confidence === "high" &&
       candidate.assessment.evidenceClass === "published_result" &&
+      !conflictingResultMarkets.has(candidate.market.id.toLowerCase()) &&
       !blocksEntryForAssessment(
         exits,
         candidate.market.id,
@@ -296,8 +326,12 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
       freshPosition,
       freshMinimumProceedsTst,
     );
+    const freshCandidateNow = Date.now();
+    const freshConflictingResultMarkets = conflictingPublishedResultMarketIds({
+      assessments, markets: freshPostExitBook.markets, policy, now: freshCandidateNow,
+    });
     const freshCandidates = withoutConflictingPublishedResults(selectCandidates({
-      now: Date.now(),
+      now: freshCandidateNow,
       policy,
       markets: freshPostExitBook.markets,
       positions: freshPostExitBook.positions,
@@ -305,6 +339,7 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
     }).filter((candidate) =>
       candidate.assessment.confidence === "high" &&
       candidate.assessment.evidenceClass === "published_result" &&
+      !freshConflictingResultMarkets.has(candidate.market.id.toLowerCase()) &&
       !blocksEntryForAssessment(
         exits,
         candidate.market.id,
@@ -383,6 +418,12 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
         candidate.market.id.toLowerCase() === destinationMarket.id.toLowerCase() &&
         candidate.assessment.confidence === "high" &&
         candidate.assessment.evidenceClass === "published_result" &&
+        !conflictingPublishedResultMarketIds({
+          assessments,
+          markets: destinationBook.markets,
+          policy,
+          now: destinationCheckNow,
+        }).has(candidate.market.id.toLowerCase()) &&
         !blocksEntryForAssessment(
           exits,
           candidate.market.id,
