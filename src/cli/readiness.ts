@@ -21,14 +21,12 @@ checks.push({ name: "funding", ok: book.totalEquityTst >= policy.minimumStarting
 const tradeLedger = new TradeLedger(resolve(stateDirectory(), "trade-ledger.json"));
 const exitLedger = new ExitLedger(resolve(stateDirectory(), "exit-ledger.json"));
 const readinessNow = Date.now();
-const [tradeRecords, exitRecords, pendingTrade, pendingExit] = await Promise.all([
-  tradeLedger.records(), exitLedger.records(), tradeLedger.pending(), exitLedger.pending(),
+const [exitRecords, pendingTrade, pendingExit] = await Promise.all([
+  exitLedger.records(), tradeLedger.pending(), exitLedger.pending(),
 ]);
 const candidates = applyExitConstraints({
   candidates: selectCandidates({ now: readinessNow, policy, markets: book.markets, positions: book.positions, assessments }),
   exits: exitRecords,
-  buys: tradeRecords,
-  now: readinessNow,
 });
 checks.push({ name: "evidence", ok: candidates.length > 0, detail: `${candidates.length} actionable candidate(s)` });
 const pending = pendingTrade ?? pendingExit;

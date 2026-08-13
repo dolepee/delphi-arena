@@ -22,7 +22,6 @@ export const policySchema = z.object({
   exitSlippagePct: z.number().positive().max(5).optional(),
   minimumProfitTakeReturnPct: z.number().positive().max(50).optional(),
   maximumHoldEdgeForProfitTake: z.number().positive().max(0.2).optional(),
-  minimumRotationEdgeAdvantage: z.number().positive().max(0.5).optional(),
   maximumNewTradesPerCycle: z.literal(1),
   minimumEvidenceSources: z.number().int().positive(),
   maximumAssessmentAgeMinutes: z.number().int().positive(),

@@ -7,7 +7,7 @@ import { isDeterministicPublishedResult, maximumAdditionalShares, maximumPriceIm
 import { findQuotedPlan } from "./quote-plan.js";
 import { assertWriteReadiness, readBook } from "./runtime.js";
 import { sendAlert } from "./alerts.js";
-import { assessmentEvidenceFingerprint, blocksEntryForAssessment, ExitLedger, pendingRotationDestination } from "./exit-ledger.js";
+import { assessmentEvidenceFingerprint, blocksEntryForAssessment, ExitLedger } from "./exit-ledger.js";
 
 const sharesToRaw = (shares: number) => BigInt(Math.floor(shares * 1e6)) * 10n ** 12n;
 
@@ -113,25 +113,14 @@ export async function quoteCandidates(input: {
 export function applyExitConstraints<T extends ReturnType<typeof selectCandidates>[number]>(input: {
   candidates: T[];
   exits: Awaited<ReturnType<ExitLedger["records"]>>;
-  buys: Awaited<ReturnType<TradeLedger["records"]>>;
-  now: number;
 }): T[] {
-  const requiredRotationDestination = pendingRotationDestination(input.exits, input.buys, input.now);
   return input.candidates
     .filter((candidate) => !blocksEntryForAssessment(
       input.exits,
       candidate.market.id,
       candidate.assessment.outcomeIndex,
       assessmentEvidenceFingerprint(candidate.assessment),
-    ))
-    .filter((candidate) =>
-      !requiredRotationDestination ||
-      (
-        candidate.market.id.toLowerCase() === requiredRotationDestination.marketId.toLowerCase() &&
-        candidate.assessment.outcomeIndex === requiredRotationDestination.outcomeIndex &&
-        assessmentEvidenceFingerprint(candidate.assessment) === requiredRotationDestination.assessmentFingerprint
-      )
-    );
+    ));
 }
 
 export async function runTradingCycle(client: DelphiClient, now = Date.now()) {
@@ -147,12 +136,9 @@ export async function runTradingCycle(client: DelphiClient, now = Date.now()) {
   const pending = await ledger.pending();
   if (pending) throw new Error(`unresolved trade intent ${pending.decisionId}; automatic writes blocked`);
   const confirmedExits = await exitLedger.records();
-  const tradeRecords = await ledger.records();
   const candidates = applyExitConstraints({
     candidates: selectCandidates({ now, policy, markets: book.markets, positions: book.positions, assessments }),
     exits: confirmedExits,
-    buys: tradeRecords,
-    now,
   });
   if (candidates.length === 0) return { status: "NO_TRADE" as const, reason: "no fresh evidence-backed edge" };
 

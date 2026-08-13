@@ -18,7 +18,6 @@
   "exitSlippagePct": 2,
   "minimumProfitTakeReturnPct": 3,
   "maximumHoldEdgeForProfitTake": 0.02,
-  "minimumRotationEdgeAdvantage": 0.15,
   "maximumNewTradesPerCycle": 1,
   "minimumEvidenceSources": 1,
   "maximumAssessmentAgeMinutes": 30,

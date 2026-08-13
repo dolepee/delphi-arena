@@ -11,13 +11,9 @@ const exitRecordSchema = z.object({
   shares: z.number().positive(),
   quotedProceedsTst: z.number().nonnegative(),
   minimumProceedsTst: z.number().nonnegative(),
-  reason: z.enum(["EVIDENCE_FLIP", "PROFIT_TAKE", "OPPORTUNITY_ROTATION"]),
+  reason: z.enum(["EVIDENCE_FLIP", "PROFIT_TAKE"]),
   assessmentObservedAt: z.string().datetime().optional(),
   assessmentFingerprint: z.string().length(64).optional(),
-  rotationDestinationMarketId: z.string().optional(),
-  rotationDestinationOutcomeIndex: z.number().int().nonnegative().optional(),
-  rotationDestinationAssessmentFingerprint: z.string().length(64).optional(),
-  rotationDestinationExpiresAt: z.string().datetime().optional(),
   status: z.enum(["PREPARED", "CONFIRMED"]),
   createdAt: z.number().int().nonnegative(),
   transactionHash: z.string().optional(),
@@ -102,45 +98,4 @@ export function blocksEntryForAssessment(
     record.outcomeIndex === outcomeIndex &&
     record.assessmentFingerprint === assessmentFingerprint
   );
-}
-
-export function pendingRotationDestination(
-  exits: ExitRecord[],
-  buys: Array<{
-    status: "PREPARED" | "CONFIRMED";
-    createdAt: number;
-    marketId: string;
-    outcomeIndex: number;
-    assessmentFingerprint?: string | undefined;
-  }>,
-  now: number,
-): { marketId: string; outcomeIndex: number; assessmentFingerprint: string } | null {
-  const rotation = exits
-    .filter((record) =>
-      record.status === "CONFIRMED" &&
-      record.reason === "OPPORTUNITY_ROTATION" &&
-      record.rotationDestinationMarketId
-    )
-    .sort((left, right) => right.createdAt - left.createdAt)[0];
-  if (
-    !rotation?.rotationDestinationMarketId ||
-    rotation.rotationDestinationOutcomeIndex === undefined ||
-    !rotation.rotationDestinationAssessmentFingerprint
-  ) return null;
-  const expiresAt = rotation.rotationDestinationExpiresAt
-    ? Date.parse(rotation.rotationDestinationExpiresAt)
-    : rotation.createdAt + 10 * 60_000;
-  if (now >= expiresAt) return null;
-  const replacementAlreadyBought = buys.some((record) =>
-    record.status === "CONFIRMED" &&
-    record.createdAt > rotation.createdAt &&
-    record.marketId.toLowerCase() === rotation.rotationDestinationMarketId!.toLowerCase() &&
-    record.outcomeIndex === rotation.rotationDestinationOutcomeIndex &&
-    record.assessmentFingerprint === rotation.rotationDestinationAssessmentFingerprint
-  );
-  return replacementAlreadyBought ? null : {
-    marketId: rotation.rotationDestinationMarketId,
-    outcomeIndex: rotation.rotationDestinationOutcomeIndex,
-    assessmentFingerprint: rotation.rotationDestinationAssessmentFingerprint,
-  };
 }
