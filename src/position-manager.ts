@@ -3,16 +3,13 @@ import type { DelphiClient } from "@gensyn-ai/gensyn-delphi-sdk";
 import { resolve } from "node:path";
 import { sendAlert } from "./alerts.js";
 import { loadAssessments, loadPolicy, stateDirectory } from "./config.js";
-import { assessmentEvidenceFingerprint, blocksEntryForAssessment, ExitLedger, pendingRotationDestination } from "./exit-ledger.js";
+import { assessmentEvidenceFingerprint, ExitLedger } from "./exit-ledger.js";
 import type { ExitRecord } from "./exit-ledger.js";
 import { TradeLedger } from "./ledger.js";
 import type { TradeRecord } from "./ledger.js";
 import type { Assessment, PositionView } from "./model.js";
 import { activationMode, assertMaintenanceReadiness, readBook } from "./runtime.js";
-import type { Book } from "./runtime.js";
-import { quoteCandidates } from "./engine.js";
-import { isAssessmentEvidenceValid, selectCandidates } from "./planner.js";
-import { marketToView } from "./delphi.js";
+import { isAssessmentEvidenceValid } from "./planner.js";
 
 const sharesToRaw = (shares: number) => BigInt(Math.floor(shares * 1e6)) * 10n ** 12n;
 const rawToTokens = (raw: bigint) => Number(raw) / 1e6;
@@ -44,48 +41,6 @@ export function assessmentForPosition(input: {
   return preferred.sort((left, right) => Date.parse(right.observedAt) - Date.parse(left.observedAt))[0] ?? null;
 }
 
-export function withoutConflictingPublishedResults<T extends {
-  market: { id: string };
-  assessment: Assessment;
-}>(candidates: T[]): T[] {
-  const outcomes = new Map<string, Set<number>>();
-  for (const candidate of candidates) {
-    const key = candidate.market.id.toLowerCase();
-    const set = outcomes.get(key) ?? new Set<number>();
-    set.add(candidate.assessment.outcomeIndex);
-    outcomes.set(key, set);
-  }
-  return candidates.filter((candidate) =>
-    (outcomes.get(candidate.market.id.toLowerCase())?.size ?? 0) === 1
-  );
-}
-
-export function conflictingPublishedResultMarketIds(input: {
-  assessments: Assessment[];
-  markets: Array<{ id: string; outcomes: string[]; prices: number[] }>;
-  policy: Awaited<ReturnType<typeof loadPolicy>>;
-  now: number;
-}): Set<string> {
-  const markets = new Map(input.markets.map((market) => [market.id.toLowerCase(), market]));
-  const outcomes = new Map<string, Set<number>>();
-  for (const assessment of input.assessments) {
-    const key = assessment.marketId.toLowerCase();
-    const market = markets.get(key);
-    if (
-      !market ||
-      assessment.evidenceClass !== "published_result" ||
-      assessment.confidence !== "high" ||
-      market.outcomes[assessment.outcomeIndex] === undefined ||
-      market.prices[assessment.outcomeIndex] === undefined ||
-      !isAssessmentEvidenceValid({ assessment, policy: input.policy, now: input.now })
-    ) continue;
-    const set = outcomes.get(key) ?? new Set<number>();
-    set.add(assessment.outcomeIndex);
-    outcomes.set(key, set);
-  }
-  return new Set([...outcomes.entries()].filter(([, values]) => values.size > 1).map(([key]) => key));
-}
-
 export function exitReason(input: {
   position: PositionView;
   assessment: Assessment;
@@ -93,9 +48,7 @@ export function exitReason(input: {
   averageCostPerShare: number | null;
   minimumProfitTakeReturnPct: number;
   maximumHoldEdgeForProfitTake: number;
-  bestAlternativeNetEdge?: number | null;
-  minimumRotationEdgeAdvantage?: number;
-}): "EVIDENCE_FLIP" | "PROFIT_TAKE" | "OPPORTUNITY_ROTATION" | null {
+}): "EVIDENCE_FLIP" | "PROFIT_TAKE" | null {
   if (
     input.assessment.outcomeIndex !== input.position.outcomeIndex &&
     input.assessment.status === "actionable" &&
@@ -107,34 +60,9 @@ export function exitReason(input: {
   const averageExitPrice = input.minimumProceedsTst / input.position.shares;
   const returnPct = (averageExitPrice / input.averageCostPerShare - 1) * 100;
   const holdEdge = input.assessment.probability - averageExitPrice;
-  if (
-    returnPct >= 0 &&
-    input.bestAlternativeNetEdge !== null &&
-    input.bestAlternativeNetEdge !== undefined &&
-    input.bestAlternativeNetEdge - holdEdge >= (input.minimumRotationEdgeAdvantage ?? 0.15)
-  ) return "OPPORTUNITY_ROTATION";
   return returnPct >= input.minimumProfitTakeReturnPct && holdEdge <= input.maximumHoldEdgeForProfitTake
     ? "PROFIT_TAKE"
     : null;
-}
-
-export function rotationValueJustifiesFullExit(input: {
-  position: PositionView;
-  assessment: Assessment;
-  minimumProceedsTst: number;
-  destinationWorstCaseExpectedProfitTst: number;
-  baselineDestinationWorstCaseExpectedProfitTst: number;
-}): boolean {
-  const averageExitPrice = input.minimumProceedsTst / input.position.shares;
-  const remainingHoldValue = Math.max(
-    0,
-    (input.assessment.probability - averageExitPrice) * input.position.shares,
-  );
-  const incrementalDestinationValue = Math.max(
-    0,
-    input.destinationWorstCaseExpectedProfitTst - input.baselineDestinationWorstCaseExpectedProfitTst,
-  );
-  return incrementalDestinationValue >= remainingHoldValue;
 }
 
 export function remainingAverageCostPerShare(input: {
@@ -196,38 +124,6 @@ export function positionLedgerGeneration(input: {
   })).digest("hex");
 }
 
-export function bestAlternativeForMarket(
-  alternatives: Array<{ marketId: string; netEdge: number }>,
-  currentMarketId: string,
-): { marketId: string; netEdge: number } | null {
-  return alternatives
-    .filter((candidate) => candidate.marketId.toLowerCase() !== currentMarketId.toLowerCase())
-    .sort((left, right) => right.netEdge - left.netEdge)[0] ?? null;
-}
-
-export function postExitBookForRotation(
-  book: Book,
-  position: PositionView,
-  minimumProceedsTst: number,
-): Book {
-  const positions = book.positions.filter((candidate) =>
-    candidate.marketId.toLowerCase() !== position.marketId.toLowerCase() ||
-    candidate.outcomeIndex !== position.outcomeIndex
-  );
-  const deployedValueTst = positions.reduce(
-    (total, candidate) => total + candidate.shares * candidate.markPrice,
-    0,
-  );
-  const availableTst = book.availableTst + minimumProceedsTst;
-  return {
-    ...book,
-    positions,
-    availableTst,
-    deployedValueTst,
-    totalEquityTst: availableTst + deployedValueTst,
-  };
-}
-
 export async function runPositionManagementCycle(client: DelphiClient, now = Date.now()) {
   const [policy, assessments, book] = await Promise.all([loadPolicy(), loadAssessments(), readBook(client)]);
   await assertMaintenanceReadiness(book);
@@ -242,7 +138,6 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
   if (buyPending) throw new Error(`unresolved trade intent ${buyPending.decisionId}; automatic exits blocked`);
   const buys = await tradeLedger.records();
   const exits = await exitLedger.records();
-  const pendingRotation = pendingRotationDestination(exits, buys, now);
 
   for (const position of book.positions) {
     const market = book.markets.find((candidate) => candidate.id.toLowerCase() === position.marketId.toLowerCase());
@@ -263,39 +158,6 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
       exits,
       entrySlippagePct: policy.slippagePct,
     });
-    const postExitBook = postExitBookForRotation(book, position, minimumProceedsTst);
-    const conflictingResultMarkets = conflictingPublishedResultMarketIds({
-      assessments, markets: postExitBook.markets, policy, now,
-    });
-    const resultCandidates = withoutConflictingPublishedResults(selectCandidates({
-      now,
-      policy,
-      markets: postExitBook.markets,
-      positions: postExitBook.positions,
-      assessments,
-    }).filter((candidate) =>
-      candidate.assessment.confidence === "high" &&
-      candidate.assessment.evidenceClass === "published_result" &&
-      !conflictingResultMarkets.has(candidate.market.id.toLowerCase()) &&
-      !blocksEntryForAssessment(
-        exits,
-        candidate.market.id,
-        candidate.assessment.outcomeIndex,
-        assessmentEvidenceFingerprint(candidate.assessment),
-      )
-    ));
-    const { plans: executableAlternatives } = await quoteCandidates({
-      client,
-      candidates: resultCandidates,
-      policy,
-      book: postExitBook,
-      mode: "full",
-    });
-    const alternatives = executableAlternatives.map((plan) => ({
-      marketId: plan.market.id,
-      netEdge: plan.netEdge,
-    }));
-    const bestAlternative = bestAlternativeForMarket(alternatives, market.id);
     const reason = exitReason({
       position,
       assessment,
@@ -303,8 +165,6 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
       averageCostPerShare,
       minimumProfitTakeReturnPct: policy.minimumProfitTakeReturnPct ?? 3,
       maximumHoldEdgeForProfitTake: policy.maximumHoldEdgeForProfitTake ?? 0.02,
-      bestAlternativeNetEdge: pendingRotation ? null : bestAlternative?.netEdge ?? null,
-      minimumRotationEdgeAdvantage: policy.minimumRotationEdgeAdvantage ?? 0.15,
     });
     if (!reason) continue;
 
@@ -340,51 +200,6 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
       BigInt(Math.floor((100 - (policy.exitSlippagePct ?? policy.slippagePct)) * 100)) /
       10_000n;
     const freshMinimumProceedsTst = rawToTokens(freshMinimumProceedsAtomic);
-    const freshPostExitBook = postExitBookForRotation(
-      freshBook,
-      freshPosition,
-      freshMinimumProceedsTst,
-    );
-    const freshCandidateNow = Date.now();
-    const freshConflictingResultMarkets = conflictingPublishedResultMarketIds({
-      assessments, markets: freshPostExitBook.markets, policy, now: freshCandidateNow,
-    });
-    const freshCandidates = withoutConflictingPublishedResults(selectCandidates({
-      now: freshCandidateNow,
-      policy,
-      markets: freshPostExitBook.markets,
-      positions: freshPostExitBook.positions,
-      assessments,
-    }).filter((candidate) =>
-      candidate.assessment.confidence === "high" &&
-      candidate.assessment.evidenceClass === "published_result" &&
-      !freshConflictingResultMarkets.has(candidate.market.id.toLowerCase()) &&
-      !blocksEntryForAssessment(
-        exits,
-        candidate.market.id,
-        candidate.assessment.outcomeIndex,
-        assessmentEvidenceFingerprint(candidate.assessment),
-      )
-    ));
-    const { plans: freshExecutableAlternatives } = await quoteCandidates({
-      client,
-      candidates: freshCandidates,
-      policy,
-      book: freshPostExitBook,
-      mode: "full",
-    });
-    const freshBestAlternative = bestAlternativeForMarket(
-      freshExecutableAlternatives.map((plan) => ({
-        marketId: plan.market.id,
-        netEdge: plan.netEdge,
-      })),
-      freshMarket.id,
-    );
-    const freshBestAlternativePlan = freshBestAlternative
-      ? freshExecutableAlternatives.find((plan) =>
-        plan.market.id.toLowerCase() === freshBestAlternative.marketId.toLowerCase()
-      ) ?? null
-      : null;
     const freshReason = exitReason({
       position: freshPosition,
       assessment,
@@ -392,141 +207,13 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
       averageCostPerShare,
       minimumProfitTakeReturnPct: policy.minimumProfitTakeReturnPct ?? 3,
       maximumHoldEdgeForProfitTake: policy.maximumHoldEdgeForProfitTake ?? 0.02,
-      bestAlternativeNetEdge: pendingRotation ? null : freshBestAlternative?.netEdge ?? null,
-      minimumRotationEdgeAdvantage: policy.minimumRotationEdgeAdvantage ?? 0.15,
     });
     if (!freshReason || freshReason !== reason) continue;
-
-    let rotationDestinationMarketId: string | undefined;
-    let rotationDestinationOutcomeIndex: number | undefined;
-    let rotationDestinationAssessmentFingerprint: string | undefined;
-    let rotationDestinationExpiresAt: string | undefined;
-    if (freshReason === "OPPORTUNITY_ROTATION") {
-      if (!freshBestAlternativePlan) continue;
-      const destinationMarket = marketToView(await client.getMarket({
-        id: freshBestAlternativePlan.market.id,
-        pricesAndImpliedProbabilities: true,
-      }));
-      const destinationCheckNow = Date.now();
-      if (
-        destinationMarket.status !== "open" ||
-        isPastMarketResolution(destinationMarket.resolvesAt, destinationCheckNow) ||
-        !isAssessmentEvidenceValid({
-          assessment: freshBestAlternativePlan.assessment,
-          policy,
-          now: destinationCheckNow,
-        }) ||
-        destinationMarket.outcomes[freshBestAlternativePlan.assessment.outcomeIndex] === undefined ||
-        destinationMarket.prices[freshBestAlternativePlan.assessment.outcomeIndex] === undefined
-      ) continue;
-      const destinationBook: Book = {
-        ...freshPostExitBook,
-        markets: freshPostExitBook.markets.map((candidate) =>
-          candidate.id.toLowerCase() === destinationMarket.id.toLowerCase()
-            ? destinationMarket
-            : candidate
-        ),
-      };
-      const destinationCandidates = withoutConflictingPublishedResults(selectCandidates({
-        now: destinationCheckNow,
-        policy,
-        markets: destinationBook.markets,
-        positions: destinationBook.positions,
-        assessments,
-      }).filter((candidate) =>
-        candidate.market.id.toLowerCase() === destinationMarket.id.toLowerCase() &&
-        candidate.assessment.confidence === "high" &&
-        candidate.assessment.evidenceClass === "published_result" &&
-        !conflictingPublishedResultMarketIds({
-          assessments,
-          markets: destinationBook.markets,
-          policy,
-          now: destinationCheckNow,
-        }).has(candidate.market.id.toLowerCase()) &&
-        !blocksEntryForAssessment(
-          exits,
-          candidate.market.id,
-          candidate.assessment.outcomeIndex,
-          assessmentEvidenceFingerprint(candidate.assessment),
-        )
-      ));
-      const { plans: destinationPlans } = await quoteCandidates({
-        client,
-        candidates: destinationCandidates,
-        policy,
-        book: destinationBook,
-        mode: "full",
-      });
-      const destinationPlan = destinationPlans.find((plan) =>
-        plan.market.id.toLowerCase() === destinationMarket.id.toLowerCase()
-      );
-      if (!destinationPlan) continue;
-      const currentDestinationBook: Book = {
-        ...freshBook,
-        markets: freshBook.markets.map((candidate) =>
-          candidate.id.toLowerCase() === destinationMarket.id.toLowerCase()
-            ? destinationMarket
-            : candidate
-        ),
-      };
-      const currentDestinationCandidates = selectCandidates({
-        now: destinationCheckNow,
-        policy,
-        markets: currentDestinationBook.markets,
-        positions: currentDestinationBook.positions,
-        assessments,
-      }).filter((candidate) =>
-        candidate.market.id.toLowerCase() === destinationMarket.id.toLowerCase() &&
-        candidate.assessment.outcomeIndex === destinationPlan.assessment.outcomeIndex &&
-        assessmentEvidenceFingerprint(candidate.assessment) ===
-          assessmentEvidenceFingerprint(destinationPlan.assessment)
-      );
-      const { plans: currentDestinationPlans } = await quoteCandidates({
-        client,
-        candidates: currentDestinationCandidates,
-        policy,
-        book: currentDestinationBook,
-        mode: "full",
-      });
-      const currentDestinationPlan = currentDestinationPlans.find((plan) =>
-        plan.market.id.toLowerCase() === destinationPlan.market.id.toLowerCase() &&
-        plan.assessment.outcomeIndex === destinationPlan.assessment.outcomeIndex &&
-        assessmentEvidenceFingerprint(plan.assessment) ===
-          assessmentEvidenceFingerprint(destinationPlan.assessment)
-      );
-      if (!rotationValueJustifiesFullExit({
-        position: freshPosition,
-        assessment,
-        minimumProceedsTst: freshMinimumProceedsTst,
-        destinationWorstCaseExpectedProfitTst: destinationPlan.worstCaseExpectedProfitTst,
-        baselineDestinationWorstCaseExpectedProfitTst:
-          currentDestinationPlan?.worstCaseExpectedProfitTst ?? 0,
-      }) || exitReason({
-        position: freshPosition,
-        assessment,
-        minimumProceedsTst: freshMinimumProceedsTst,
-        averageCostPerShare,
-        minimumProfitTakeReturnPct: policy.minimumProfitTakeReturnPct ?? 3,
-        maximumHoldEdgeForProfitTake: policy.maximumHoldEdgeForProfitTake ?? 0.02,
-        bestAlternativeNetEdge: destinationPlan.netEdge,
-        minimumRotationEdgeAdvantage: policy.minimumRotationEdgeAdvantage ?? 0.15,
-      }) !== "OPPORTUNITY_ROTATION") continue;
-      rotationDestinationMarketId = destinationPlan.market.id;
-      rotationDestinationOutcomeIndex = destinationPlan.assessment.outcomeIndex;
-      rotationDestinationAssessmentFingerprint = assessmentEvidenceFingerprint(destinationPlan.assessment);
-      rotationDestinationExpiresAt = new Date(Math.min(
-        Date.parse(destinationPlan.assessment.expiresAt),
-        Date.parse(destinationPlan.assessment.observedAt) + policy.maximumAssessmentAgeMinutes * 60_000,
-        destinationPlan.market.resolvesAt ? Date.parse(destinationPlan.market.resolvesAt) : Number.POSITIVE_INFINITY,
-        Date.parse(policy.competitionEndsAt),
-      )).toISOString();
-    }
     const finalNow = Date.now();
     if (
       finalNow >= Date.parse(policy.competitionEndsAt) ||
       !isAssessmentEvidenceValid({ assessment, policy, now: finalNow }) ||
-      isPastMarketResolution(freshMarket.resolvesAt, finalNow) ||
-      (rotationDestinationExpiresAt !== undefined && finalNow >= Date.parse(rotationDestinationExpiresAt))
+      isPastMarketResolution(freshMarket.resolvesAt, finalNow)
     ) continue;
     if (await activationMode() !== "full") continue;
 
@@ -542,10 +229,6 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
       minimumProceedsTst: freshMinimumProceedsTst, reason,
       assessmentObservedAt: assessment.observedAt,
       assessmentFingerprint: assessmentEvidenceFingerprint(assessment),
-      rotationDestinationMarketId,
-      rotationDestinationOutcomeIndex,
-      rotationDestinationAssessmentFingerprint,
-      rotationDestinationExpiresAt,
       createdAt: finalNow,
     });
     const result = await client.sellShares({

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Assessment, PositionView } from "../src/model.js";
-import { assessmentForPosition, bestAlternativeForMarket, conflictingPublishedResultMarketIds, exitReason, isPastMarketResolution, positionLedgerGeneration, postExitBookForRotation, remainingAverageCostPerShare, rotationValueJustifiesFullExit, withoutConflictingPublishedResults } from "../src/position-manager.js";
+import { assessmentForPosition, exitReason, isPastMarketResolution, positionLedgerGeneration, remainingAverageCostPerShare } from "../src/position-manager.js";
 
 const position: PositionView = {
   marketId: "0x1111111111111111111111111111111111111111",
@@ -94,49 +94,6 @@ describe("position exit policy", () => {
     })).toBeNull();
   });
 
-  it("rotates a non-losing position into a substantially stronger verified edge", () => {
-    expect(exitReason({
-      position,
-      assessment: { ...assessment, probability: 0.99, evidenceClass: "official_schedule" },
-      minimumProceedsTst: 92,
-      averageCostPerShare: 0.9,
-      minimumProfitTakeReturnPct: 3,
-      maximumHoldEdgeForProfitTake: 0.02,
-      bestAlternativeNetEdge: 0.62,
-      minimumRotationEdgeAdvantage: 0.15,
-    })).toBe("OPPORTUNITY_ROTATION");
-  });
-
-  it("does not rotate at a loss or for a marginal edge improvement", () => {
-    const base = {
-      position,
-      assessment: { ...assessment, probability: 0.99, evidenceClass: "official_schedule" as const },
-      minimumProfitTakeReturnPct: 3,
-      maximumHoldEdgeForProfitTake: 0.02,
-      minimumRotationEdgeAdvantage: 0.15,
-    };
-    expect(exitReason({ ...base, minimumProceedsTst: 88, averageCostPerShare: 0.9, bestAlternativeNetEdge: 0.62 })).toBeNull();
-    expect(exitReason({ ...base, minimumProceedsTst: 92, averageCostPerShare: 0.9, bestAlternativeNetEdge: 0.2 })).toBeNull();
-  });
-
-  it("does not liquidate a large hold for a tiny executable destination", () => {
-    expect(rotationValueJustifiesFullExit({
-      position, assessment: { ...assessment, probability: 0.9 },
-      minimumProceedsTst: 80, destinationWorstCaseExpectedProfitTst: 1,
-      baselineDestinationWorstCaseExpectedProfitTst: 0,
-    })).toBe(false);
-    expect(rotationValueJustifiesFullExit({
-      position, assessment: { ...assessment, probability: 0.9 },
-      minimumProceedsTst: 80, destinationWorstCaseExpectedProfitTst: 11,
-      baselineDestinationWorstCaseExpectedProfitTst: 0,
-    })).toBe(true);
-    expect(rotationValueJustifiesFullExit({
-      position, assessment: { ...assessment, probability: 0.9 },
-      minimumProceedsTst: 80, destinationWorstCaseExpectedProfitTst: 20,
-      baselineDestinationWorstCaseExpectedProfitTst: 15,
-    })).toBe(false);
-  });
-
   it("does not profit-take without a known cost basis", () => {
     expect(exitReason({
       position,
@@ -148,7 +105,7 @@ describe("position exit policy", () => {
     })).toBeNull();
   });
 
-  it("reserves exit slippage before approving a profit or rotation", () => {
+  it("reserves exit slippage before approving a profit", () => {
     const common = {
       position,
       assessment,
@@ -156,7 +113,7 @@ describe("position exit policy", () => {
       minimumProfitTakeReturnPct: 3,
       maximumHoldEdgeForProfitTake: 0.02,
     };
-    expect(exitReason({ ...common, minimumProceedsTst: 96, bestAlternativeNetEdge: 0.62 })).toBeNull();
+    expect(exitReason({ ...common, minimumProceedsTst: 96 })).toBeNull();
     expect(exitReason({ ...common, minimumProceedsTst: 98 })).toBeNull();
   });
 });
@@ -221,55 +178,5 @@ describe("remaining inventory cost basis", () => {
       exits: [firstExit],
     });
     expect(reopened).not.toBe(first);
-  });
-});
-
-describe("rotation alternative selection", () => {
-  it("excludes a destination market with contradictory published results", () => {
-    const market = { id: position.marketId };
-    const candidates = [
-      { market, assessment: { ...assessment, outcomeIndex: 0 } },
-      { market, assessment: { ...assessment, outcomeIndex: 1 } },
-    ];
-    expect(withoutConflictingPublishedResults(candidates)).toEqual([]);
-  });
-
-  it("detects contradictory results before edge selection", () => {
-    const results = [
-      { ...assessment, evidenceClass: "published_result" as const, probability: 0.99 },
-      { ...assessment, outcomeIndex: 1, evidenceClass: "published_result" as const, probability: 0.99 },
-    ];
-    expect(conflictingPublishedResultMarketIds({
-      assessments: results,
-      markets: [{ id: position.marketId, outcomes: ["Yes", "No"], prices: [0.99, 0.01] }],
-      policy: { minimumEvidenceSources: 1, maximumAssessmentAgeMinutes: 30 } as never,
-      now: Date.parse("2026-08-13T20:01:00.000Z"),
-    }).has(position.marketId.toLowerCase())).toBe(true);
-  });
-
-  it("uses the strongest different market when the global best is the current one", () => {
-    expect(bestAlternativeForMarket([
-      { marketId: position.marketId, netEdge: 0.7 },
-      { marketId: "0x2222222222222222222222222222222222222222", netEdge: 0.6 },
-      { marketId: "0x3333333333333333333333333333333333333333", netEdge: 0.5 },
-    ], position.marketId)?.netEdge).toBe(0.6);
-  });
-
-  it("releases sale proceeds and allocation room before quoting a destination", () => {
-    const otherPosition: PositionView = {
-      marketId: "0x2222222222222222222222222222222222222222",
-      outcomeIndex: 0,
-      shares: 50,
-      markPrice: 0.6,
-    };
-    const book = {
-      rawMarkets: [], rawPositions: [], markets: [], positions: [position, otherPosition],
-      availableTst: 10, gasEth: 1, deployedValueTst: 110, totalEquityTst: 120,
-    };
-    const postExit = postExitBookForRotation(book, position, 75);
-    expect(postExit.positions).toEqual([otherPosition]);
-    expect(postExit.availableTst).toBe(85);
-    expect(postExit.deployedValueTst).toBe(30);
-    expect(postExit.totalEquityTst).toBe(115);
   });
 });
