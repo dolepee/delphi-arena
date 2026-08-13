@@ -3,6 +3,7 @@ import { client, assertSignerIdentity } from "../delphi.js";
 import { loadAssessments, loadPolicy, stateDirectory } from "../config.js";
 import { TradeLedger } from "../ledger.js";
 import { ExitLedger } from "../exit-ledger.js";
+import { applyExitConstraints } from "../engine.js";
 import { selectCandidates } from "../planner.js";
 import { activationMode, readBook } from "../runtime.js";
 
@@ -17,12 +18,19 @@ const [policy, assessments, book] = await Promise.all([loadPolicy(), loadAssessm
 checks.push({ name: "api", ok: book.markets.length > 0, detail: `${book.markets.length} open markets` });
 checks.push({ name: "gas", ok: book.gasEth >= policy.minimumGasEth, detail: `${book.gasEth} ETH` });
 checks.push({ name: "funding", ok: book.totalEquityTst >= policy.minimumStartingTst, detail: `${book.totalEquityTst} TST` });
-const candidates = selectCandidates({ now: Date.now(), policy, markets: book.markets, positions: book.positions, assessments });
-checks.push({ name: "evidence", ok: candidates.length > 0, detail: `${candidates.length} actionable candidate(s)` });
-const [pendingTrade, pendingExit] = await Promise.all([
-  new TradeLedger(resolve(stateDirectory(), "trade-ledger.json")).pending(),
-  new ExitLedger(resolve(stateDirectory(), "exit-ledger.json")).pending(),
+const tradeLedger = new TradeLedger(resolve(stateDirectory(), "trade-ledger.json"));
+const exitLedger = new ExitLedger(resolve(stateDirectory(), "exit-ledger.json"));
+const readinessNow = Date.now();
+const [tradeRecords, exitRecords, pendingTrade, pendingExit] = await Promise.all([
+  tradeLedger.records(), exitLedger.records(), tradeLedger.pending(), exitLedger.pending(),
 ]);
+const candidates = applyExitConstraints({
+  candidates: selectCandidates({ now: readinessNow, policy, markets: book.markets, positions: book.positions, assessments }),
+  exits: exitRecords,
+  buys: tradeRecords,
+  now: readinessNow,
+});
+checks.push({ name: "evidence", ok: candidates.length > 0, detail: `${candidates.length} actionable candidate(s)` });
 const pending = pendingTrade ?? pendingExit;
 checks.push({
   name: "ledger",

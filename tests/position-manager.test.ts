@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Assessment, PositionView } from "../src/model.js";
-import { assessmentForPosition, bestAlternativeForMarket, conflictingPublishedResultMarketIds, exitReason, isPastMarketResolution, positionLedgerGeneration, postExitBookForRotation, remainingAverageCostPerShare, withoutConflictingPublishedResults } from "../src/position-manager.js";
+import { assessmentForPosition, bestAlternativeForMarket, conflictingPublishedResultMarketIds, exitReason, isPastMarketResolution, positionLedgerGeneration, postExitBookForRotation, remainingAverageCostPerShare, rotationValueJustifiesFullExit, withoutConflictingPublishedResults } from "../src/position-manager.js";
 
 const position: PositionView = {
   marketId: "0x1111111111111111111111111111111111111111",
@@ -117,6 +117,17 @@ describe("position exit policy", () => {
     };
     expect(exitReason({ ...base, minimumProceedsTst: 88, averageCostPerShare: 0.9, bestAlternativeNetEdge: 0.62 })).toBeNull();
     expect(exitReason({ ...base, minimumProceedsTst: 92, averageCostPerShare: 0.9, bestAlternativeNetEdge: 0.2 })).toBeNull();
+  });
+
+  it("does not liquidate a large hold for a tiny executable destination", () => {
+    expect(rotationValueJustifiesFullExit({
+      position, assessment: { ...assessment, probability: 0.9 },
+      minimumProceedsTst: 80, destinationWorstCaseExpectedProfitTst: 1,
+    })).toBe(false);
+    expect(rotationValueJustifiesFullExit({
+      position, assessment: { ...assessment, probability: 0.9 },
+      minimumProceedsTst: 80, destinationWorstCaseExpectedProfitTst: 11,
+    })).toBe(true);
   });
 
   it("does not profit-take without a known cost basis", () => {

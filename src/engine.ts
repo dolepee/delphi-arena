@@ -110,6 +110,30 @@ export async function quoteCandidates(input: {
   return { plans: rankQuotedPlans(quotedPlans), quoteFailures };
 }
 
+export function applyExitConstraints<T extends ReturnType<typeof selectCandidates>[number]>(input: {
+  candidates: T[];
+  exits: Awaited<ReturnType<ExitLedger["records"]>>;
+  buys: Awaited<ReturnType<TradeLedger["records"]>>;
+  now: number;
+}): T[] {
+  const requiredRotationDestination = pendingRotationDestination(input.exits, input.buys, input.now);
+  return input.candidates
+    .filter((candidate) => !blocksEntryForAssessment(
+      input.exits,
+      candidate.market.id,
+      candidate.assessment.outcomeIndex,
+      assessmentEvidenceFingerprint(candidate.assessment),
+    ))
+    .filter((candidate) =>
+      !requiredRotationDestination ||
+      (
+        candidate.market.id.toLowerCase() === requiredRotationDestination.marketId.toLowerCase() &&
+        candidate.assessment.outcomeIndex === requiredRotationDestination.outcomeIndex &&
+        assessmentEvidenceFingerprint(candidate.assessment) === requiredRotationDestination.assessmentFingerprint
+      )
+    );
+}
+
 export async function runTradingCycle(client: DelphiClient, now = Date.now()) {
   const [policy, assessments, book] = await Promise.all([
     loadPolicy(),
@@ -124,22 +148,12 @@ export async function runTradingCycle(client: DelphiClient, now = Date.now()) {
   if (pending) throw new Error(`unresolved trade intent ${pending.decisionId}; automatic writes blocked`);
   const confirmedExits = await exitLedger.records();
   const tradeRecords = await ledger.records();
-  const requiredRotationDestination = pendingRotationDestination(confirmedExits, tradeRecords, now);
-  const candidates = selectCandidates({ now, policy, markets: book.markets, positions: book.positions, assessments })
-    .filter((candidate) => !blocksEntryForAssessment(
-      confirmedExits,
-      candidate.market.id,
-      candidate.assessment.outcomeIndex,
-      assessmentEvidenceFingerprint(candidate.assessment),
-    ))
-    .filter((candidate) =>
-      !requiredRotationDestination ||
-      (
-        candidate.market.id.toLowerCase() === requiredRotationDestination.marketId.toLowerCase() &&
-        candidate.assessment.outcomeIndex === requiredRotationDestination.outcomeIndex &&
-        assessmentEvidenceFingerprint(candidate.assessment) === requiredRotationDestination.assessmentFingerprint
-      )
-    );
+  const candidates = applyExitConstraints({
+    candidates: selectCandidates({ now, policy, markets: book.markets, positions: book.positions, assessments }),
+    exits: confirmedExits,
+    buys: tradeRecords,
+    now,
+  });
   if (candidates.length === 0) return { status: "NO_TRADE" as const, reason: "no fresh evidence-backed edge" };
 
   const mode = await assertWriteReadiness({ now, policy, book });

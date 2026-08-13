@@ -118,6 +118,20 @@ export function exitReason(input: {
     : null;
 }
 
+export function rotationValueJustifiesFullExit(input: {
+  position: PositionView;
+  assessment: Assessment;
+  minimumProceedsTst: number;
+  destinationWorstCaseExpectedProfitTst: number;
+}): boolean {
+  const averageExitPrice = input.minimumProceedsTst / input.position.shares;
+  const remainingHoldValue = Math.max(
+    0,
+    (input.assessment.probability - averageExitPrice) * input.position.shares,
+  );
+  return input.destinationWorstCaseExpectedProfitTst >= remainingHoldValue;
+}
+
 export function remainingAverageCostPerShare(input: {
   position: PositionView;
   buys: TradeRecord[];
@@ -441,7 +455,12 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
       const destinationPlan = destinationPlans.find((plan) =>
         plan.market.id.toLowerCase() === destinationMarket.id.toLowerCase()
       );
-      if (!destinationPlan || exitReason({
+      if (!destinationPlan || !rotationValueJustifiesFullExit({
+        position: freshPosition,
+        assessment,
+        minimumProceedsTst: freshMinimumProceedsTst,
+        destinationWorstCaseExpectedProfitTst: destinationPlan.worstCaseExpectedProfitTst,
+      }) || exitReason({
         position: freshPosition,
         assessment,
         minimumProceedsTst: freshMinimumProceedsTst,
