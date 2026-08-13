@@ -79,6 +79,8 @@ export interface Candidate {
   spotPrice: number;
   rawEdge: number;
   existingMarketValue: number;
+  existingMarketShares: number;
+  existingPortfolioShares: number;
 }
 
 export interface QuotedPlan extends Candidate {

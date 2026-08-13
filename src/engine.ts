@@ -51,6 +51,7 @@ export async function quoteCandidates(input: {
         policy: input.policy,
         budgetTst,
         mode: input.mode,
+        totalEquityTst: input.book.totalEquityTst,
       });
       if (plan) quotedPlans.push(plan);
     } catch (error) {

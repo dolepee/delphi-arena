@@ -21,7 +21,14 @@ for (const candidate of candidates) {
       existingMarketValueTst: candidate.existingMarketValue,
       mode,
     });
-    const accepted = await findQuotedPlan({ client, candidate, policy, budgetTst, mode });
+    const accepted = await findQuotedPlan({
+      client,
+      candidate,
+      policy,
+      budgetTst,
+      mode,
+      totalEquityTst: assumedEquity,
+    });
     previews.push(accepted ? {
       mode,
       marketId: accepted.market.id,

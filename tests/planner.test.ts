@@ -81,13 +81,13 @@ describe("LMSR quote and allocation controls", () => {
   const candidate = selectCandidates({ now: NOW, policy: POLICY, markets: [MARKET], positions: [], assessments: [ASSESSMENT] })[0]!;
 
   it("accepts a quote only when net edge, impact, slippage, and budget survive", () => {
-    const plan = validateQuote({ candidate, policy: POLICY, shares: 10, quotedCostTst: 6.2, budgetTst: 7, mode: "canary" });
+    const plan = validateQuote({ candidate, policy: POLICY, shares: 10, quotedCostTst: 6.2, budgetTst: 7, mode: "canary", totalEquityTst: 1000 });
     expect(plan?.netEdge).toBeGreaterThan(POLICY.minimumNetEdge);
     expect(plan?.maximumCostTst).toBeLessThanOrEqual(7);
   });
 
   it("rejects a quote whose average execution destroys the edge", () => {
-    expect(validateQuote({ candidate, policy: POLICY, shares: 10, quotedCostTst: 7.8, budgetTst: 10, mode: "full" })).toBeNull();
+    expect(validateQuote({ candidate, policy: POLICY, shares: 10, quotedCostTst: 7.8, budgetTst: 10, mode: "full", totalEquityTst: 1000 })).toBeNull();
   });
 
   it("uses the tighter published-result floor only for exact official releases", () => {
@@ -107,6 +107,7 @@ describe("LMSR quote and allocation controls", () => {
       quotedCostTst: 9.55,
       budgetTst: 10,
       mode: "full",
+      totalEquityTst: 1000,
     })).toBeNull();
     expect(validateQuote({
       candidate: releasedCandidate!,
@@ -115,6 +116,7 @@ describe("LMSR quote and allocation controls", () => {
       quotedCostTst: 9.5,
       budgetTst: 10,
       mode: "full",
+      totalEquityTst: 1000,
     })).not.toBeNull();
     expect(selectCandidates({
       now: NOW,
@@ -151,6 +153,7 @@ describe("LMSR quote and allocation controls", () => {
       quotedCostTst: 6,
       budgetTst: 7,
       mode: "full",
+      totalEquityTst: 1000,
     });
     expect(accepted?.maximumAveragePrice).toBeCloseTo(0.612);
     expect(accepted?.netEdge).toBeCloseTo(0.082);
@@ -168,6 +171,7 @@ describe("LMSR quote and allocation controls", () => {
       quotedCostTst: 6.39,
       budgetTst: 7,
       mode: "full",
+      totalEquityTst: 1000,
     })).toBeNull();
   });
 
@@ -188,6 +192,7 @@ describe("LMSR quote and allocation controls", () => {
       quotedCostTst: 9.3,
       budgetTst: 10,
       mode: "full",
+      totalEquityTst: 1000,
     })).not.toBeNull();
   });
 
@@ -205,6 +210,43 @@ describe("LMSR quote and allocation controls", () => {
     expect(orderBudget({ policy: POLICY, assessment: scheduled, totalEquityTst: 1000, availableTst: 1000, deployedValueTst: 0, existingMarketValueTst: 0, mode: "full" })).toBe(250);
   });
 
+  it("caps LMSR result orders by worst-case post-trade face-value exposure", () => {
+    const published = { ...ASSESSMENT, evidenceClass: "published_result" as const, probability: 0.99 };
+    const positions: PositionView[] = [{
+      marketId: MARKET.id,
+      outcomeIndex: 0,
+      shares: 800,
+      markPrice: 0.6,
+    }];
+    const [positioned] = selectCandidates({
+      now: NOW,
+      policy: POLICY,
+      markets: [MARKET],
+      positions,
+      assessments: [published],
+    });
+    expect(positioned?.existingMarketShares).toBe(800);
+    expect(positioned?.existingPortfolioShares).toBe(800);
+    expect(validateQuote({
+      candidate: positioned!,
+      policy: POLICY,
+      shares: 51,
+      quotedCostTst: 35,
+      budgetTst: 50,
+      mode: "full",
+      totalEquityTst: 1000,
+    })).toBeNull();
+    expect(validateQuote({
+      candidate: positioned!,
+      policy: POLICY,
+      shares: 50,
+      quotedCostTst: 35,
+      budgetTst: 50,
+      mode: "full",
+      totalEquityTst: 1000,
+    })).not.toBeNull();
+  });
+
   it("blocks full-live dust while preserving the bounded canary", () => {
     expect(orderBudget({ policy: POLICY, assessment: ASSESSMENT, totalEquityTst: 1000, availableTst: 4.99, deployedValueTst: 0, existingMarketValueTst: 0, mode: "full" })).toBe(0);
     expect(orderBudget({ policy: POLICY, assessment: ASSESSMENT, totalEquityTst: 1000, availableTst: 1, deployedValueTst: 0, existingMarketValueTst: 0, mode: "canary" })).toBe(1);
@@ -218,6 +260,7 @@ describe("LMSR quote and allocation controls", () => {
       quotedCostTst: 3,
       budgetTst: 100,
       mode: "full",
+      totalEquityTst: 1000,
     })!;
     const largeLowerEdge = validateQuote({
       candidate: {
@@ -232,6 +275,7 @@ describe("LMSR quote and allocation controls", () => {
       quotedCostTst: 67.5,
       budgetTst: 100,
       mode: "full",
+      totalEquityTst: 1000,
     })!;
     expect(smallHighEdge.netEdge).toBeGreaterThan(largeLowerEdge.netEdge);
     expect(rankQuotedPlans([smallHighEdge, largeLowerEdge])[0]).toBe(largeLowerEdge);

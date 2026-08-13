@@ -11,6 +11,7 @@ export async function findQuotedPlan(input: {
   policy: Policy;
   budgetTst: number;
   mode: "canary" | "full";
+  totalEquityTst: number;
 }): Promise<QuotedPlan | null> {
   if (input.budgetTst <= 0) return null;
   let low = 0;
@@ -33,6 +34,7 @@ export async function findQuotedPlan(input: {
       quotedCostTst: Number(tokensIn) / 1e6,
       budgetTst: input.budgetTst,
       mode: input.mode,
+      totalEquityTst: input.totalEquityTst,
     });
     if (plan) {
       best = plan;

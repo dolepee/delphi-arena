@@ -18,6 +18,8 @@ function candidate(id: string, probability: number, spotPrice: number): Candidat
     spotPrice,
     rawEdge: probability - spotPrice,
     existingMarketValue: 0,
+    existingMarketShares: 0,
+    existingPortfolioShares: 0,
     market: { id: marketId, question: id, outcomes: ["Yes", "No"], status: "open", resolvesAt: "2026-08-14T00:00:00Z", prices: [spotPrice, 1 - spotPrice], tradingFeePct: 0.5, dataSources: [] },
     assessment: { marketId, outcomeIndex: 0, evidenceClass: "forecast", probability, confidence: "high", status: "actionable", observedAt: "2026-08-13T11:00:00Z", expiresAt: "2026-08-13T12:30:00Z", rationale: "Authoritative evidence supports this bounded forecast.", sources: [{ url: "https://example.com", kind: "authoritative", observedAt: "2026-08-13T11:00:00Z", valueHash: id.repeat(64) }] },
   };

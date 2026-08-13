@@ -28,6 +28,10 @@ export function selectCandidates(input: {
   positions: PositionView[];
   assessments: Assessment[];
 }): Candidate[] {
+  const existingPortfolioShares = input.positions.reduce(
+    (total, position) => total + position.shares,
+    0,
+  );
   const markets = new Map(input.markets.map((market) => [market.id.toLowerCase(), market]));
   const positionsByMarket = new Map<string, PositionView[]>();
   for (const position of input.positions) {
@@ -56,9 +60,21 @@ export function selectCandidates(input: {
       (total, position) => total + position.shares * position.markPrice,
       0,
     );
+    const existingMarketShares = existing.reduce(
+      (total, position) => total + position.shares,
+      0,
+    );
     const rawEdge = assessment.probability - spotPrice;
     if (rawEdge < minimumNetEdge(assessment, input.policy)) return [];
-    return [{ assessment, market, spotPrice, rawEdge, existingMarketValue }];
+    return [{
+      assessment,
+      market,
+      spotPrice,
+      rawEdge,
+      existingMarketValue,
+      existingMarketShares,
+      existingPortfolioShares,
+    }];
   }).sort((left, right) =>
     right.rawEdge * confidenceWeight[right.assessment.confidence] -
     left.rawEdge * confidenceWeight[left.assessment.confidence]
@@ -85,6 +101,7 @@ export function validateQuote(input: {
   quotedCostTst: number;
   budgetTst: number;
   mode: "canary" | "full";
+  totalEquityTst: number;
 }): QuotedPlan | null {
   if (
     !Number.isFinite(input.shares) ||
@@ -106,10 +123,26 @@ export function validateQuote(input: {
   const priceImpact = maximumAveragePrice - input.candidate.spotPrice;
   const worstCaseExpectedProfitTst =
     input.shares * input.candidate.assessment.probability - maximumCostTst;
+  const resultLane = input.mode === "full" && isDeterministicPublishedResult(input.candidate.assessment);
+  const marketAllocationPct = resultLane
+    ? input.policy.maximumPublishedResultMarketAllocationPct
+    : input.policy.maximumMarketAllocationPct;
+  const portfolioAllocationPct = resultLane
+    ? input.policy.maximumPublishedResultPortfolioAllocationPct
+    : input.policy.maximumPortfolioAllocationPct;
+  // Binary outcome shares cannot be worth more than 1 TST each. This face-value
+  // ceiling is conservative and remains valid even when LMSR marginal price is
+  // above the average cash paid.
+  const maximumPostTradeMarketValueTst =
+    input.candidate.existingMarketShares + input.shares;
+  const maximumPostTradePortfolioValueTst =
+    input.candidate.existingPortfolioShares + input.shares;
   if (
     netEdge < minimumNetEdge(input.candidate.assessment, input.policy) ||
     priceImpact > maximumPriceImpact(input.candidate.assessment, input.policy) ||
-    worstCaseExpectedProfitTst <= 0
+    worstCaseExpectedProfitTst <= 0 ||
+    maximumPostTradeMarketValueTst > input.totalEquityTst * marketAllocationPct / 100 ||
+    maximumPostTradePortfolioValueTst > input.totalEquityTst * portfolioAllocationPct / 100
   ) return null;
   return {
     ...input.candidate,
