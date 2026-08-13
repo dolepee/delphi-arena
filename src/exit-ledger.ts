@@ -14,6 +14,7 @@ const exitRecordSchema = z.object({
   reason: z.enum(["EVIDENCE_FLIP", "PROFIT_TAKE"]),
   assessmentObservedAt: z.string().datetime().optional(),
   assessmentFingerprint: z.string().length(64).optional(),
+  soldOutcomeCooldownUntil: z.string().datetime().optional(),
   status: z.enum(["PREPARED", "CONFIRMED"]),
   createdAt: z.number().int().nonnegative(),
   transactionHash: z.string().optional(),
@@ -91,11 +92,19 @@ export function blocksEntryForAssessment(
   marketId: string,
   outcomeIndex: number,
   assessmentFingerprint: string,
+  now: number,
 ): boolean {
   return exits.some((record) =>
     record.status === "CONFIRMED" &&
     record.marketId.toLowerCase() === marketId.toLowerCase() &&
     record.outcomeIndex === outcomeIndex &&
-    record.assessmentFingerprint === assessmentFingerprint
+    (
+      record.assessmentFingerprint === assessmentFingerprint ||
+      (
+        record.reason === "EVIDENCE_FLIP" &&
+        record.soldOutcomeCooldownUntil !== undefined &&
+        now < Date.parse(record.soldOutcomeCooldownUntil)
+      )
+    )
   );
 }

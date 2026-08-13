@@ -139,6 +139,15 @@ describe("remaining inventory cost basis", () => {
     })).toBeCloseTo(0.918);
   });
 
+  it("does not apply an older untracked-position exit to a later buy", () => {
+    expect(remainingAverageCostPerShare({
+      position: { ...position, shares: 100 },
+      buys: [confirmedBuy("a", 100, 90, 2)],
+      exits: [confirmedExit("b", 100, 1)],
+      entrySlippagePct: 2,
+    })).toBeCloseTo(0.918);
+  });
+
   it("fails closed when ledger inventory cannot explain the live position", () => {
     expect(remainingAverageCostPerShare({
       position: { ...position, shares: 100 },

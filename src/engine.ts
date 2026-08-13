@@ -113,6 +113,7 @@ export async function quoteCandidates(input: {
 export function applyExitConstraints<T extends ReturnType<typeof selectCandidates>[number]>(input: {
   candidates: T[];
   exits: Awaited<ReturnType<ExitLedger["records"]>>;
+  now: number;
 }): T[] {
   return input.candidates
     .filter((candidate) => !blocksEntryForAssessment(
@@ -120,6 +121,7 @@ export function applyExitConstraints<T extends ReturnType<typeof selectCandidate
       candidate.market.id,
       candidate.assessment.outcomeIndex,
       assessmentEvidenceFingerprint(candidate.assessment),
+      input.now,
     ));
 }
 
@@ -139,6 +141,7 @@ export async function runTradingCycle(client: DelphiClient, now = Date.now()) {
   const candidates = applyExitConstraints({
     candidates: selectCandidates({ now, policy, markets: book.markets, positions: book.positions, assessments }),
     exits: confirmedExits,
+    now,
   });
   if (candidates.length === 0) return { status: "NO_TRADE" as const, reason: "no fresh evidence-backed edge" };
 

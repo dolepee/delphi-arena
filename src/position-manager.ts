@@ -74,24 +74,35 @@ export function remainingAverageCostPerShare(input: {
   const keyMatches = (record: { marketId: string; outcomeIndex: number }) =>
     record.marketId.toLowerCase() === input.position.marketId.toLowerCase() &&
     record.outcomeIndex === input.position.outcomeIndex;
-  const lots = input.buys
-    .filter((record) => record.status === "CONFIRMED" && keyMatches(record))
-    .sort((left, right) => left.createdAt - right.createdAt)
-    .map((record) => ({
-      shares: record.shares,
-      costPerShare: (
-        record.actualCostTst ?? record.maximumCostTst ?? record.quotedCostTst * (1 + input.entrySlippagePct / 100)
-      ) / record.shares,
-    }));
-  let sharesExited = input.exits
-    .filter((record) => record.status === "CONFIRMED" && keyMatches(record))
-    .reduce((total, record) => total + record.shares, 0);
-  for (const lot of lots) {
-    const consumed = Math.min(lot.shares, sharesExited);
-    lot.shares -= consumed;
-    sharesExited -= consumed;
+  const lots: Array<{ shares: number; costPerShare: number }> = [];
+  const events = [
+    ...input.buys.filter((record) => record.status === "CONFIRMED" && keyMatches(record))
+      .map((record) => ({ kind: "buy" as const, record })),
+    ...input.exits.filter((record) => record.status === "CONFIRMED" && keyMatches(record))
+      .map((record) => ({ kind: "exit" as const, record })),
+  ].sort((left, right) => left.record.createdAt - right.record.createdAt ||
+    (left.kind === "buy" ? -1 : 1));
+  for (const event of events) {
+    if (event.kind === "buy") {
+      lots.push({
+        shares: event.record.shares,
+        costPerShare: (
+          event.record.actualCostTst ?? event.record.maximumCostTst ??
+          event.record.quotedCostTst * (1 + input.entrySlippagePct / 100)
+        ) / event.record.shares,
+      });
+      continue;
+    }
+    let sharesExited = event.record.shares;
+    for (const lot of lots) {
+      const consumed = Math.min(lot.shares, sharesExited);
+      lot.shares -= consumed;
+      sharesExited -= consumed;
+      if (sharesExited <= 1e-6) break;
+    }
+    // Any unmatched portion belonged to inventory that predated this ledger.
+    // It must not consume a later, newly opened lot.
   }
-  if (sharesExited > 1e-6) return null;
   const remaining = lots.filter((lot) => lot.shares > 1e-6);
   const recordedShares = remaining.reduce((total, lot) => total + lot.shares, 0);
   if (Math.abs(recordedShares - input.position.shares) > 1e-4) return null;
@@ -233,6 +244,7 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
       minimumProceedsTst: freshMinimumProceedsTst, reason,
       assessmentObservedAt: assessment.observedAt,
       assessmentFingerprint: assessmentEvidenceFingerprint(assessment),
+      soldOutcomeCooldownUntil: reason === "EVIDENCE_FLIP" ? assessment.expiresAt : undefined,
       createdAt: finalNow,
     });
     const result = await client.sellShares({

@@ -27,6 +27,7 @@ const [exitRecords, pendingTrade, pendingExit] = await Promise.all([
 const candidates = applyExitConstraints({
   candidates: selectCandidates({ now: readinessNow, policy, markets: book.markets, positions: book.positions, assessments }),
   exits: exitRecords,
+  now: readinessNow,
 });
 checks.push({ name: "evidence", ok: candidates.length > 0, detail: `${candidates.length} actionable candidate(s)` });
 const pending = pendingTrade ?? pendingExit;

@@ -44,8 +44,8 @@ describe("exit ledger", () => {
       reason: "PROFIT_TAKE" as const, status: "CONFIRMED" as const, createdAt: 1,
       transactionHash: `0x${"b".repeat(64)}`, assessmentFingerprint: fingerprint,
     }];
-    expect(blocksEntryForAssessment(exits, assessment.marketId, 0, fingerprint)).toBe(true);
-    expect(blocksEntryForAssessment(exits, assessment.marketId, 1, fingerprint)).toBe(false);
+    expect(blocksEntryForAssessment(exits, assessment.marketId, 0, fingerprint, 0)).toBe(true);
+    expect(blocksEntryForAssessment(exits, assessment.marketId, 1, fingerprint, 0)).toBe(false);
     expect(assessmentEvidenceFingerprint({
       ...assessment,
       sources: [{ ...assessment.sources[0]!, observedAt: "2026-08-13T20:05:00.000Z" }],
@@ -61,7 +61,21 @@ describe("exit ledger", () => {
       ...assessment,
       sources: [secondSource, assessment.sources[0]!],
     }));
-    expect(blocksEntryForAssessment(exits, assessment.marketId, 0, "c".repeat(64))).toBe(false);
+    expect(blocksEntryForAssessment(exits, assessment.marketId, 0, "c".repeat(64), 0)).toBe(false);
+    const flip = [{
+      ...exits[0]!,
+      reason: "EVIDENCE_FLIP" as const,
+      assessmentFingerprint: "d".repeat(64),
+      soldOutcomeCooldownUntil: "2026-08-13T20:10:00.000Z",
+    }];
+    expect(blocksEntryForAssessment(
+      flip, assessment.marketId, 0, "e".repeat(64),
+      Date.parse("2026-08-13T20:09:59.999Z"),
+    )).toBe(true);
+    expect(blocksEntryForAssessment(
+      flip, assessment.marketId, 0, "e".repeat(64),
+      Date.parse("2026-08-13T20:10:00.000Z"),
+    )).toBe(false);
   });
 
 });
