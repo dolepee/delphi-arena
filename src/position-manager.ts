@@ -377,6 +377,7 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
       rotationDestinationMarketId = destinationPlan.market.id;
       rotationDestinationExpiresAt = new Date(Math.min(
         Date.parse(destinationPlan.assessment.expiresAt),
+        Date.parse(destinationPlan.assessment.observedAt) + policy.maximumAssessmentAgeMinutes * 60_000,
         destinationPlan.market.resolvesAt ? Date.parse(destinationPlan.market.resolvesAt) : Number.POSITIVE_INFINITY,
         Date.parse(policy.competitionEndsAt),
       )).toISOString();
