@@ -8,10 +8,11 @@ import type { ExitRecord } from "./exit-ledger.js";
 import { TradeLedger } from "./ledger.js";
 import type { TradeRecord } from "./ledger.js";
 import type { Assessment, PositionView } from "./model.js";
-import { assertMaintenanceReadiness, readBook } from "./runtime.js";
+import { activationMode, assertMaintenanceReadiness, readBook } from "./runtime.js";
 import type { Book } from "./runtime.js";
 import { quoteCandidates } from "./engine.js";
 import { isAssessmentEvidenceValid, selectCandidates } from "./planner.js";
+import { marketToView } from "./delphi.js";
 
 const sharesToRaw = (shares: number) => BigInt(Math.floor(shares * 1e6)) * 10n ** 12n;
 const rawToTokens = (raw: bigint) => Number(raw) / 1e6;
@@ -142,6 +143,9 @@ export function postExitBookForRotation(
 export async function runPositionManagementCycle(client: DelphiClient, now = Date.now()) {
   const [policy, assessments, book] = await Promise.all([loadPolicy(), loadAssessments(), readBook(client)]);
   await assertMaintenanceReadiness(book);
+  if (await activationMode() !== "full") {
+    throw new Error("position management requires full-live approval");
+  }
   const tradeLedger = new TradeLedger(resolve(stateDirectory(), "trade-ledger.json"));
   const exitLedger = new ExitLedger(resolve(stateDirectory(), "exit-ledger.json"));
   const pending = await exitLedger.pending();
@@ -272,6 +276,11 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
       })),
       freshMarket.id,
     );
+    const freshBestAlternativePlan = freshBestAlternative
+      ? freshExecutableAlternatives.find((plan) =>
+        plan.market.id.toLowerCase() === freshBestAlternative.marketId.toLowerCase()
+      ) ?? null
+      : null;
     const freshReason = exitReason({
       position: freshPosition,
       assessment,
@@ -290,6 +299,26 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
       !isAssessmentEvidenceValid({ assessment, policy, now: finalNow }) ||
       finalNow >= Date.parse(freshMarket.resolvesAt ?? "1970-01-01")
     ) continue;
+    if (freshReason === "OPPORTUNITY_ROTATION") {
+      if (!freshBestAlternativePlan) continue;
+      const destinationMarket = marketToView(await client.getMarket({
+        id: freshBestAlternativePlan.market.id,
+        pricesAndImpliedProbabilities: true,
+      }));
+      const destinationCheckNow = Date.now();
+      if (
+        destinationMarket.status !== "open" ||
+        destinationCheckNow >= Date.parse(destinationMarket.resolvesAt ?? "1970-01-01") ||
+        !isAssessmentEvidenceValid({
+          assessment: freshBestAlternativePlan.assessment,
+          policy,
+          now: destinationCheckNow,
+        }) ||
+        destinationMarket.outcomes[freshBestAlternativePlan.assessment.outcomeIndex] === undefined ||
+        destinationMarket.prices[freshBestAlternativePlan.assessment.outcomeIndex] === undefined
+      ) continue;
+    }
+    if (await activationMode() !== "full") continue;
 
     const positionGeneration = positionLedgerGeneration({ position, buys, exits });
     const decisionId = createHash("sha256").update(JSON.stringify({
