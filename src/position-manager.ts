@@ -9,6 +9,7 @@ import { TradeLedger } from "./ledger.js";
 import type { TradeRecord } from "./ledger.js";
 import type { Assessment, PositionView } from "./model.js";
 import { assertMaintenanceReadiness, readBook } from "./runtime.js";
+import type { Book } from "./runtime.js";
 import { quoteCandidates } from "./engine.js";
 import { isAssessmentEvidenceValid, selectCandidates } from "./planner.js";
 
@@ -97,6 +98,29 @@ export function bestAlternativeForMarket(
     .sort((left, right) => right.netEdge - left.netEdge)[0] ?? null;
 }
 
+export function postExitBookForRotation(
+  book: Book,
+  position: PositionView,
+  minimumProceedsTst: number,
+): Book {
+  const positions = book.positions.filter((candidate) =>
+    candidate.marketId.toLowerCase() !== position.marketId.toLowerCase() ||
+    candidate.outcomeIndex !== position.outcomeIndex
+  );
+  const deployedValueTst = positions.reduce(
+    (total, candidate) => total + candidate.shares * candidate.markPrice,
+    0,
+  );
+  const availableTst = book.availableTst + minimumProceedsTst;
+  return {
+    ...book,
+    positions,
+    availableTst,
+    deployedValueTst,
+    totalEquityTst: availableTst + deployedValueTst,
+  };
+}
+
 export async function runPositionManagementCycle(client: DelphiClient, now = Date.now()) {
   const [policy, assessments, book] = await Promise.all([loadPolicy(), loadAssessments(), readBook(client)]);
   await assertMaintenanceReadiness(book);
@@ -108,17 +132,6 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
   if (buyPending) throw new Error(`unresolved trade intent ${buyPending.decisionId}; automatic exits blocked`);
   const buys = await tradeLedger.records();
   const exits = await exitLedger.records();
-
-  const resultCandidates = selectCandidates({ now, policy, markets: book.markets, positions: book.positions, assessments })
-    .filter((candidate) => candidate.assessment.confidence === "high" && candidate.assessment.evidenceClass === "published_result");
-  const { plans: executableAlternatives } = await quoteCandidates({
-    client,
-    candidates: resultCandidates,
-    policy,
-    book,
-    mode: "full",
-  });
-  const alternatives = executableAlternatives.map((plan) => ({ marketId: plan.market.id, netEdge: plan.netEdge }));
 
   for (const position of book.positions) {
     const market = book.markets.find((candidate) => candidate.id.toLowerCase() === position.marketId.toLowerCase());
@@ -141,6 +154,28 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
       exits,
       entrySlippagePct: policy.slippagePct,
     });
+    const postExitBook = postExitBookForRotation(book, position, minimumProceedsTst);
+    const resultCandidates = selectCandidates({
+      now,
+      policy,
+      markets: postExitBook.markets,
+      positions: postExitBook.positions,
+      assessments,
+    }).filter((candidate) =>
+      candidate.assessment.confidence === "high" &&
+      candidate.assessment.evidenceClass === "published_result"
+    );
+    const { plans: executableAlternatives } = await quoteCandidates({
+      client,
+      candidates: resultCandidates,
+      policy,
+      book: postExitBook,
+      mode: "full",
+    });
+    const alternatives = executableAlternatives.map((plan) => ({
+      marketId: plan.market.id,
+      netEdge: plan.netEdge,
+    }));
     const bestAlternative = bestAlternativeForMarket(alternatives, market.id);
     const reason = exitReason({
       position,

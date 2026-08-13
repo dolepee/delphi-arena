@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Assessment, PositionView } from "../src/model.js";
-import { bestAlternativeForMarket, exitReason, remainingAverageCostPerShare } from "../src/position-manager.js";
+import { bestAlternativeForMarket, exitReason, postExitBookForRotation, remainingAverageCostPerShare } from "../src/position-manager.js";
 
 const position: PositionView = {
   marketId: "0x1111111111111111111111111111111111111111",
@@ -168,5 +168,23 @@ describe("rotation alternative selection", () => {
       { marketId: "0x2222222222222222222222222222222222222222", netEdge: 0.6 },
       { marketId: "0x3333333333333333333333333333333333333333", netEdge: 0.5 },
     ], position.marketId)?.netEdge).toBe(0.6);
+  });
+
+  it("releases sale proceeds and allocation room before quoting a destination", () => {
+    const otherPosition: PositionView = {
+      marketId: "0x2222222222222222222222222222222222222222",
+      outcomeIndex: 0,
+      shares: 50,
+      markPrice: 0.6,
+    };
+    const book = {
+      rawMarkets: [], rawPositions: [], markets: [], positions: [position, otherPosition],
+      availableTst: 10, gasEth: 1, deployedValueTst: 110, totalEquityTst: 120,
+    };
+    const postExit = postExitBookForRotation(book, position, 75);
+    expect(postExit.positions).toEqual([otherPosition]);
+    expect(postExit.availableTst).toBe(85);
+    expect(postExit.deployedValueTst).toBe(30);
+    expect(postExit.totalEquityTst).toBe(115);
   });
 });
