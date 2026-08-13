@@ -3,7 +3,7 @@ import type { DelphiClient } from "@gensyn-ai/gensyn-delphi-sdk";
 import { resolve } from "node:path";
 import { sendAlert } from "./alerts.js";
 import { loadAssessments, loadPolicy, stateDirectory } from "./config.js";
-import { assessmentEvidenceFingerprint, blocksEntryForAssessment, ExitLedger } from "./exit-ledger.js";
+import { assessmentEvidenceFingerprint, blocksEntryForAssessment, ExitLedger, pendingRotationDestination } from "./exit-ledger.js";
 import type { ExitRecord } from "./exit-ledger.js";
 import { TradeLedger } from "./ledger.js";
 import type { TradeRecord } from "./ledger.js";
@@ -42,6 +42,22 @@ export function assessmentForPosition(input: {
     ? publishedResults
     : valid.filter((assessment) => assessment.outcomeIndex === input.position.outcomeIndex);
   return preferred.sort((left, right) => Date.parse(right.observedAt) - Date.parse(left.observedAt))[0] ?? null;
+}
+
+export function withoutConflictingPublishedResults<T extends {
+  market: { id: string };
+  assessment: Assessment;
+}>(candidates: T[]): T[] {
+  const outcomes = new Map<string, Set<number>>();
+  for (const candidate of candidates) {
+    const key = candidate.market.id.toLowerCase();
+    const set = outcomes.get(key) ?? new Set<number>();
+    set.add(candidate.assessment.outcomeIndex);
+    outcomes.set(key, set);
+  }
+  return candidates.filter((candidate) =>
+    (outcomes.get(candidate.market.id.toLowerCase())?.size ?? 0) === 1
+  );
 }
 
 export function exitReason(input: {
@@ -181,6 +197,7 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
   if (buyPending) throw new Error(`unresolved trade intent ${buyPending.decisionId}; automatic exits blocked`);
   const buys = await tradeLedger.records();
   const exits = await exitLedger.records();
+  const pendingRotation = pendingRotationDestination(exits, buys, now);
 
   for (const position of book.positions) {
     const market = book.markets.find((candidate) => candidate.id.toLowerCase() === position.marketId.toLowerCase());
@@ -202,7 +219,7 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
       entrySlippagePct: policy.slippagePct,
     });
     const postExitBook = postExitBookForRotation(book, position, minimumProceedsTst);
-    const resultCandidates = selectCandidates({
+    const resultCandidates = withoutConflictingPublishedResults(selectCandidates({
       now,
       policy,
       markets: postExitBook.markets,
@@ -217,7 +234,7 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
         candidate.assessment.outcomeIndex,
         assessmentEvidenceFingerprint(candidate.assessment),
       )
-    );
+    ));
     const { plans: executableAlternatives } = await quoteCandidates({
       client,
       candidates: resultCandidates,
@@ -237,7 +254,7 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
       averageCostPerShare,
       minimumProfitTakeReturnPct: policy.minimumProfitTakeReturnPct ?? 3,
       maximumHoldEdgeForProfitTake: policy.maximumHoldEdgeForProfitTake ?? 0.02,
-      bestAlternativeNetEdge: bestAlternative?.netEdge ?? null,
+      bestAlternativeNetEdge: pendingRotation ? null : bestAlternative?.netEdge ?? null,
       minimumRotationEdgeAdvantage: policy.minimumRotationEdgeAdvantage ?? 0.15,
     });
     if (!reason) continue;
@@ -279,7 +296,7 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
       freshPosition,
       freshMinimumProceedsTst,
     );
-    const freshCandidates = selectCandidates({
+    const freshCandidates = withoutConflictingPublishedResults(selectCandidates({
       now: Date.now(),
       policy,
       markets: freshPostExitBook.markets,
@@ -294,7 +311,7 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
         candidate.assessment.outcomeIndex,
         assessmentEvidenceFingerprint(candidate.assessment),
       )
-    );
+    ));
     const { plans: freshExecutableAlternatives } = await quoteCandidates({
       client,
       candidates: freshCandidates,
@@ -321,7 +338,7 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
       averageCostPerShare,
       minimumProfitTakeReturnPct: policy.minimumProfitTakeReturnPct ?? 3,
       maximumHoldEdgeForProfitTake: policy.maximumHoldEdgeForProfitTake ?? 0.02,
-      bestAlternativeNetEdge: freshBestAlternative?.netEdge ?? null,
+      bestAlternativeNetEdge: pendingRotation ? null : freshBestAlternative?.netEdge ?? null,
       minimumRotationEdgeAdvantage: policy.minimumRotationEdgeAdvantage ?? 0.15,
     });
     if (!freshReason || freshReason !== reason) continue;
@@ -356,7 +373,7 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
             : candidate
         ),
       };
-      const destinationCandidates = selectCandidates({
+      const destinationCandidates = withoutConflictingPublishedResults(selectCandidates({
         now: destinationCheckNow,
         policy,
         markets: destinationBook.markets,
@@ -372,7 +389,7 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
           candidate.assessment.outcomeIndex,
           assessmentEvidenceFingerprint(candidate.assessment),
         )
-      );
+      ));
       const { plans: destinationPlans } = await quoteCandidates({
         client,
         candidates: destinationCandidates,

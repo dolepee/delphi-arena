@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Assessment, PositionView } from "../src/model.js";
-import { assessmentForPosition, bestAlternativeForMarket, exitReason, isPastMarketResolution, positionLedgerGeneration, postExitBookForRotation, remainingAverageCostPerShare } from "../src/position-manager.js";
+import { assessmentForPosition, bestAlternativeForMarket, exitReason, isPastMarketResolution, positionLedgerGeneration, postExitBookForRotation, remainingAverageCostPerShare, withoutConflictingPublishedResults } from "../src/position-manager.js";
 
 const position: PositionView = {
   marketId: "0x1111111111111111111111111111111111111111",
@@ -207,6 +207,15 @@ describe("remaining inventory cost basis", () => {
 });
 
 describe("rotation alternative selection", () => {
+  it("excludes a destination market with contradictory published results", () => {
+    const market = { id: position.marketId };
+    const candidates = [
+      { market, assessment: { ...assessment, outcomeIndex: 0 } },
+      { market, assessment: { ...assessment, outcomeIndex: 1 } },
+    ];
+    expect(withoutConflictingPublishedResults(candidates)).toEqual([]);
+  });
+
   it("uses the strongest different market when the global best is the current one", () => {
     expect(bestAlternativeForMarket([
       { marketId: position.marketId, netEdge: 0.7 },
