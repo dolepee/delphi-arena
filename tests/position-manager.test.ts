@@ -123,11 +123,18 @@ describe("position exit policy", () => {
     expect(rotationValueJustifiesFullExit({
       position, assessment: { ...assessment, probability: 0.9 },
       minimumProceedsTst: 80, destinationWorstCaseExpectedProfitTst: 1,
+      baselineDestinationWorstCaseExpectedProfitTst: 0,
     })).toBe(false);
     expect(rotationValueJustifiesFullExit({
       position, assessment: { ...assessment, probability: 0.9 },
       minimumProceedsTst: 80, destinationWorstCaseExpectedProfitTst: 11,
+      baselineDestinationWorstCaseExpectedProfitTst: 0,
     })).toBe(true);
+    expect(rotationValueJustifiesFullExit({
+      position, assessment: { ...assessment, probability: 0.9 },
+      minimumProceedsTst: 80, destinationWorstCaseExpectedProfitTst: 20,
+      baselineDestinationWorstCaseExpectedProfitTst: 15,
+    })).toBe(false);
   });
 
   it("does not profit-take without a known cost basis", () => {

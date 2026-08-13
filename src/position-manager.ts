@@ -123,13 +123,18 @@ export function rotationValueJustifiesFullExit(input: {
   assessment: Assessment;
   minimumProceedsTst: number;
   destinationWorstCaseExpectedProfitTst: number;
+  baselineDestinationWorstCaseExpectedProfitTst: number;
 }): boolean {
   const averageExitPrice = input.minimumProceedsTst / input.position.shares;
   const remainingHoldValue = Math.max(
     0,
     (input.assessment.probability - averageExitPrice) * input.position.shares,
   );
-  return input.destinationWorstCaseExpectedProfitTst >= remainingHoldValue;
+  const incrementalDestinationValue = Math.max(
+    0,
+    input.destinationWorstCaseExpectedProfitTst - input.baselineDestinationWorstCaseExpectedProfitTst,
+  );
+  return incrementalDestinationValue >= remainingHoldValue;
 }
 
 export function remainingAverageCostPerShare(input: {
@@ -455,11 +460,47 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
       const destinationPlan = destinationPlans.find((plan) =>
         plan.market.id.toLowerCase() === destinationMarket.id.toLowerCase()
       );
-      if (!destinationPlan || !rotationValueJustifiesFullExit({
+      if (!destinationPlan) continue;
+      const currentDestinationBook: Book = {
+        ...freshBook,
+        markets: freshBook.markets.map((candidate) =>
+          candidate.id.toLowerCase() === destinationMarket.id.toLowerCase()
+            ? destinationMarket
+            : candidate
+        ),
+      };
+      const currentDestinationCandidates = selectCandidates({
+        now: destinationCheckNow,
+        policy,
+        markets: currentDestinationBook.markets,
+        positions: currentDestinationBook.positions,
+        assessments,
+      }).filter((candidate) =>
+        candidate.market.id.toLowerCase() === destinationMarket.id.toLowerCase() &&
+        candidate.assessment.outcomeIndex === destinationPlan.assessment.outcomeIndex &&
+        assessmentEvidenceFingerprint(candidate.assessment) ===
+          assessmentEvidenceFingerprint(destinationPlan.assessment)
+      );
+      const { plans: currentDestinationPlans } = await quoteCandidates({
+        client,
+        candidates: currentDestinationCandidates,
+        policy,
+        book: currentDestinationBook,
+        mode: "full",
+      });
+      const currentDestinationPlan = currentDestinationPlans.find((plan) =>
+        plan.market.id.toLowerCase() === destinationPlan.market.id.toLowerCase() &&
+        plan.assessment.outcomeIndex === destinationPlan.assessment.outcomeIndex &&
+        assessmentEvidenceFingerprint(plan.assessment) ===
+          assessmentEvidenceFingerprint(destinationPlan.assessment)
+      );
+      if (!rotationValueJustifiesFullExit({
         position: freshPosition,
         assessment,
         minimumProceedsTst: freshMinimumProceedsTst,
         destinationWorstCaseExpectedProfitTst: destinationPlan.worstCaseExpectedProfitTst,
+        baselineDestinationWorstCaseExpectedProfitTst:
+          currentDestinationPlan?.worstCaseExpectedProfitTst ?? 0,
       }) || exitReason({
         position: freshPosition,
         assessment,
