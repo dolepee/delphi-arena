@@ -10,6 +10,7 @@ const recordSchema = z.object({
   quotedCostTst: z.number().positive(),
   maximumCostTst: z.number().positive().optional(),
   actualCostTst: z.number().positive().optional(),
+  assessmentFingerprint: z.string().length(64).optional(),
   status: z.enum(["PREPARED", "CONFIRMED"]),
   createdAt: z.number().int().nonnegative(),
   transactionHash: z.string().optional(),

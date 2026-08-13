@@ -134,7 +134,11 @@ export async function runTradingCycle(client: DelphiClient, now = Date.now()) {
     ))
     .filter((candidate) =>
       !requiredRotationDestination ||
-      candidate.market.id.toLowerCase() === requiredRotationDestination.toLowerCase()
+      (
+        candidate.market.id.toLowerCase() === requiredRotationDestination.marketId.toLowerCase() &&
+        candidate.assessment.outcomeIndex === requiredRotationDestination.outcomeIndex &&
+        assessmentEvidenceFingerprint(candidate.assessment) === requiredRotationDestination.assessmentFingerprint
+      )
     );
   if (candidates.length === 0) return { status: "NO_TRADE" as const, reason: "no fresh evidence-backed edge" };
 
@@ -154,6 +158,7 @@ export async function runTradingCycle(client: DelphiClient, now = Date.now()) {
           shares: plan.shares,
           quotedCostTst: plan.quotedCostTst,
           maximumCostTst: plan.maximumCostTst,
+          assessmentFingerprint: assessmentEvidenceFingerprint(plan.assessment),
           createdAt: now,
         });
         await client.ensureTokenApproval({

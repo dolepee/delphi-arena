@@ -15,6 +15,8 @@ const exitRecordSchema = z.object({
   assessmentObservedAt: z.string().datetime().optional(),
   assessmentFingerprint: z.string().length(64).optional(),
   rotationDestinationMarketId: z.string().optional(),
+  rotationDestinationOutcomeIndex: z.number().int().nonnegative().optional(),
+  rotationDestinationAssessmentFingerprint: z.string().length(64).optional(),
   rotationDestinationExpiresAt: z.string().datetime().optional(),
   status: z.enum(["PREPARED", "CONFIRMED"]),
   createdAt: z.number().int().nonnegative(),
@@ -102,9 +104,15 @@ export function blocksEntryForAssessment(
 
 export function pendingRotationDestination(
   exits: ExitRecord[],
-  buys: Array<{ status: "PREPARED" | "CONFIRMED"; createdAt: number }>,
+  buys: Array<{
+    status: "PREPARED" | "CONFIRMED";
+    createdAt: number;
+    marketId: string;
+    outcomeIndex: number;
+    assessmentFingerprint?: string | undefined;
+  }>,
   now: number,
-): string | null {
+): { marketId: string; outcomeIndex: number; assessmentFingerprint: string } | null {
   const rotation = exits
     .filter((record) =>
       record.status === "CONFIRMED" &&
@@ -112,13 +120,25 @@ export function pendingRotationDestination(
       record.rotationDestinationMarketId
     )
     .sort((left, right) => right.createdAt - left.createdAt)[0];
-  if (!rotation?.rotationDestinationMarketId) return null;
+  if (
+    !rotation?.rotationDestinationMarketId ||
+    rotation.rotationDestinationOutcomeIndex === undefined ||
+    !rotation.rotationDestinationAssessmentFingerprint
+  ) return null;
   const expiresAt = rotation.rotationDestinationExpiresAt
     ? Date.parse(rotation.rotationDestinationExpiresAt)
     : rotation.createdAt + 10 * 60_000;
   if (now >= expiresAt) return null;
   const replacementAlreadyBought = buys.some((record) =>
-    record.status === "CONFIRMED" && record.createdAt > rotation.createdAt
+    record.status === "CONFIRMED" &&
+    record.createdAt > rotation.createdAt &&
+    record.marketId.toLowerCase() === rotation.rotationDestinationMarketId!.toLowerCase() &&
+    record.outcomeIndex === rotation.rotationDestinationOutcomeIndex &&
+    record.assessmentFingerprint === rotation.rotationDestinationAssessmentFingerprint
   );
-  return replacementAlreadyBought ? null : rotation.rotationDestinationMarketId;
+  return replacementAlreadyBought ? null : {
+    marketId: rotation.rotationDestinationMarketId,
+    outcomeIndex: rotation.rotationDestinationOutcomeIndex,
+    assessmentFingerprint: rotation.rotationDestinationAssessmentFingerprint,
+  };
 }

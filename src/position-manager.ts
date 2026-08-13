@@ -310,6 +310,8 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
     if (!freshReason || freshReason !== reason) continue;
 
     let rotationDestinationMarketId: string | undefined;
+    let rotationDestinationOutcomeIndex: number | undefined;
+    let rotationDestinationAssessmentFingerprint: string | undefined;
     let rotationDestinationExpiresAt: string | undefined;
     if (freshReason === "OPPORTUNITY_ROTATION") {
       if (!freshBestAlternativePlan) continue;
@@ -375,6 +377,8 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
         minimumRotationEdgeAdvantage: policy.minimumRotationEdgeAdvantage ?? 0.15,
       }) !== "OPPORTUNITY_ROTATION") continue;
       rotationDestinationMarketId = destinationPlan.market.id;
+      rotationDestinationOutcomeIndex = destinationPlan.assessment.outcomeIndex;
+      rotationDestinationAssessmentFingerprint = assessmentEvidenceFingerprint(destinationPlan.assessment);
       rotationDestinationExpiresAt = new Date(Math.min(
         Date.parse(destinationPlan.assessment.expiresAt),
         Date.parse(destinationPlan.assessment.observedAt) + policy.maximumAssessmentAgeMinutes * 60_000,
@@ -386,7 +390,8 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
     if (
       finalNow >= Date.parse(policy.competitionEndsAt) ||
       !isAssessmentEvidenceValid({ assessment, policy, now: finalNow }) ||
-      isPastMarketResolution(freshMarket.resolvesAt, finalNow)
+      isPastMarketResolution(freshMarket.resolvesAt, finalNow) ||
+      (rotationDestinationExpiresAt !== undefined && finalNow >= Date.parse(rotationDestinationExpiresAt))
     ) continue;
     if (await activationMode() !== "full") continue;
 
@@ -403,6 +408,8 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
       assessmentObservedAt: assessment.observedAt,
       assessmentFingerprint: assessmentEvidenceFingerprint(assessment),
       rotationDestinationMarketId,
+      rotationDestinationOutcomeIndex,
+      rotationDestinationAssessmentFingerprint,
       rotationDestinationExpiresAt,
       createdAt: finalNow,
     });
