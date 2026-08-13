@@ -15,7 +15,7 @@ export function isDeterministicPublishedResult(assessment: Assessment): boolean 
     assessment.probability === 0.99;
 }
 
-function maximumPriceImpact(assessment: Assessment, policy: Policy): number {
+export function maximumPriceImpact(assessment: Assessment, policy: Policy): number {
   return isDeterministicPublishedResult(assessment)
     ? policy.maximumPublishedResultPriceImpact
     : policy.maximumPriceImpact;

@@ -114,7 +114,7 @@ describe("fresh-book allocation", () => {
   const book = {
     rawMarkets: [],
     rawPositions: [],
-    markets: [],
+    markets: [published.market],
     totalEquityTst: 1000,
     availableTst: 100,
     deployedValueTst: 560,
@@ -126,5 +126,15 @@ describe("fresh-book allocation", () => {
     expect(isPlanWithinBookLimits({ plan, policy, book })).toBe(true);
     expect(isPlanWithinBookLimits({ plan, policy, book: { ...book, totalEquityTst: 999 } })).toBe(false);
     expect(isPlanWithinBookLimits({ plan, policy, book: { ...book, availableTst: 35 } })).toBe(false);
+    expect(isPlanWithinBookLimits({
+      plan,
+      policy,
+      book: { ...book, markets: [{ ...published.market, prices: [0.51, 0.49] }] },
+    })).toBe(false);
+    expect(isPlanWithinBookLimits({
+      plan,
+      policy,
+      book: { ...book, markets: [{ ...published.market, status: "closed" }] },
+    })).toBe(false);
   });
 });

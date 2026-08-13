@@ -3,7 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { loadAssessments, loadPolicy, stateDirectory } from "./config.js";
 import { TradeLedger } from "./ledger.js";
-import { isDeterministicPublishedResult, orderBudget, rankQuotedPlans, selectCandidates } from "./planner.js";
+import { isDeterministicPublishedResult, maximumPriceImpact, orderBudget, rankQuotedPlans, selectCandidates } from "./planner.js";
 import { findQuotedPlan } from "./quote-plan.js";
 import { assertWriteReadiness, readBook } from "./runtime.js";
 import { sendAlert } from "./alerts.js";
@@ -52,7 +52,14 @@ export function isPlanWithinBookLimits(input: {
     (total, position) => total + position.shares,
     0,
   );
-  return !opposingPosition &&
+  const freshMarket = input.book.markets.find((market) =>
+    market.id.toLowerCase() === input.plan.market.id.toLowerCase()
+  );
+  const freshSpot = freshMarket?.prices[input.plan.assessment.outcomeIndex];
+  return freshMarket?.status === "open" &&
+    freshSpot !== undefined &&
+    input.plan.maximumAveragePrice - freshSpot <= maximumPriceImpact(input.plan.assessment, input.policy) &&
+    !opposingPosition &&
     input.plan.maximumCostTst <= input.book.availableTst &&
     sameOutcomeShares + input.plan.shares <= input.book.totalEquityTst * marketPct / 100 &&
     portfolioShares + input.plan.shares <= input.book.totalEquityTst * portfolioPct / 100;
