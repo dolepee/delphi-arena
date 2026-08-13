@@ -179,12 +179,10 @@ describe("remaining inventory cost basis", () => {
 
   it("changes the position generation when a sold outcome is reopened", () => {
     const firstBuy = confirmedBuy("a", 100, 70, 1);
-    const firstExit = confirmedExit("b", 100, 2);
-    const first = positionLedgerGeneration({ position, buys: [firstBuy], exits: [] });
+    const first = positionLedgerGeneration({ position, buys: [firstBuy] });
     const reopened = positionLedgerGeneration({
       position,
       buys: [firstBuy, confirmedBuy("c", 100, 90, 3)],
-      exits: [firstExit],
     });
     expect(reopened).not.toBe(first);
   });

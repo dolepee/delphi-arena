@@ -120,16 +120,12 @@ export function remainingAverageCostPerShare(input: {
 export function positionLedgerGeneration(input: {
   position: PositionView;
   buys: TradeRecord[];
-  exits: ExitRecord[];
 }): string {
   const keyMatches = (record: { marketId: string; outcomeIndex: number }) =>
     record.marketId.toLowerCase() === input.position.marketId.toLowerCase() &&
     record.outcomeIndex === input.position.outcomeIndex;
   return createHash("sha256").update(JSON.stringify({
     buys: input.buys.filter(keyMatches).map((record) => [
-      record.decisionId, record.status, record.transactionHash ?? null, record.shares,
-    ]),
-    exits: input.exits.filter(keyMatches).map((record) => [
       record.decisionId, record.status, record.transactionHash ?? null, record.shares,
     ]),
   })).digest("hex");
@@ -232,7 +228,7 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
     ) continue;
     if (await activationMode() !== "full") continue;
 
-    const positionGeneration = positionLedgerGeneration({ position, buys, exits });
+    const positionGeneration = positionLedgerGeneration({ position, buys });
     const decisionId = createHash("sha256").update(JSON.stringify({
       marketId: market.id.toLowerCase(), outcomeIndex: position.outcomeIndex, shares: position.shares,
       reason, assessmentObservedAt: assessment.observedAt, positionGeneration,
