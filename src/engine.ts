@@ -7,7 +7,7 @@ import { isDeterministicPublishedResult, maximumAdditionalShares, maximumPriceIm
 import { findQuotedPlan } from "./quote-plan.js";
 import { assertWriteReadiness, readBook } from "./runtime.js";
 import { sendAlert } from "./alerts.js";
-import { assessmentEvidenceFingerprint, blocksEntryForAssessment, ExitLedger } from "./exit-ledger.js";
+import { assessmentEvidenceFingerprint, blocksEntryForAssessment, ExitLedger, pendingRotationDestination } from "./exit-ledger.js";
 
 const sharesToRaw = (shares: number) => BigInt(Math.floor(shares * 1e6)) * 10n ** 12n;
 
@@ -123,12 +123,19 @@ export async function runTradingCycle(client: DelphiClient, now = Date.now()) {
   const pending = await ledger.pending();
   if (pending) throw new Error(`unresolved trade intent ${pending.decisionId}; automatic writes blocked`);
   const confirmedExits = await exitLedger.records();
+  const tradeRecords = await ledger.records();
+  const requiredRotationDestination = pendingRotationDestination(confirmedExits, tradeRecords);
   const candidates = selectCandidates({ now, policy, markets: book.markets, positions: book.positions, assessments })
     .filter((candidate) => !blocksEntryForAssessment(
       confirmedExits,
       candidate.market.id,
+      candidate.assessment.outcomeIndex,
       assessmentEvidenceFingerprint(candidate.assessment),
-    ));
+    ))
+    .filter((candidate) =>
+      !requiredRotationDestination ||
+      candidate.market.id.toLowerCase() === requiredRotationDestination.toLowerCase()
+    );
   if (candidates.length === 0) return { status: "NO_TRADE" as const, reason: "no fresh evidence-backed edge" };
 
   const mode = await assertWriteReadiness({ now, policy, book });

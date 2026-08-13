@@ -88,11 +88,31 @@ export function assessmentEvidenceFingerprint(
 export function blocksEntryForAssessment(
   exits: ExitRecord[],
   marketId: string,
+  outcomeIndex: number,
   assessmentFingerprint: string,
 ): boolean {
   return exits.some((record) =>
     record.status === "CONFIRMED" &&
     record.marketId.toLowerCase() === marketId.toLowerCase() &&
+    record.outcomeIndex === outcomeIndex &&
     record.assessmentFingerprint === assessmentFingerprint
   );
+}
+
+export function pendingRotationDestination(
+  exits: ExitRecord[],
+  buys: Array<{ status: "PREPARED" | "CONFIRMED"; createdAt: number }>,
+): string | null {
+  const rotation = exits
+    .filter((record) =>
+      record.status === "CONFIRMED" &&
+      record.reason === "OPPORTUNITY_ROTATION" &&
+      record.rotationDestinationMarketId
+    )
+    .sort((left, right) => right.createdAt - left.createdAt)[0];
+  if (!rotation?.rotationDestinationMarketId) return null;
+  const replacementAlreadyBought = buys.some((record) =>
+    record.status === "CONFIRMED" && record.createdAt > rotation.createdAt
+  );
+  return replacementAlreadyBought ? null : rotation.rotationDestinationMarketId;
 }

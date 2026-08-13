@@ -2,7 +2,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { assessmentEvidenceFingerprint, blocksEntryForAssessment, ExitLedger } from "../src/exit-ledger.js";
+import { assessmentEvidenceFingerprint, blocksEntryForAssessment, ExitLedger, pendingRotationDestination } from "../src/exit-ledger.js";
 
 describe("exit ledger", () => {
   it("persists one exit intent, blocks overlap, and confirms it", async () => {
@@ -44,11 +44,24 @@ describe("exit ledger", () => {
       reason: "PROFIT_TAKE" as const, status: "CONFIRMED" as const, createdAt: 1,
       transactionHash: `0x${"b".repeat(64)}`, assessmentFingerprint: fingerprint,
     }];
-    expect(blocksEntryForAssessment(exits, assessment.marketId, fingerprint)).toBe(true);
+    expect(blocksEntryForAssessment(exits, assessment.marketId, 0, fingerprint)).toBe(true);
+    expect(blocksEntryForAssessment(exits, assessment.marketId, 1, fingerprint)).toBe(false);
     expect(assessmentEvidenceFingerprint({
       ...assessment,
       sources: [{ ...assessment.sources[0]!, observedAt: "2026-08-13T20:05:00.000Z" }],
     })).toBe(fingerprint);
-    expect(blocksEntryForAssessment(exits, assessment.marketId, "c".repeat(64))).toBe(false);
+    expect(blocksEntryForAssessment(exits, assessment.marketId, 0, "c".repeat(64))).toBe(false);
+  });
+
+  it("binds the next confirmed buy to a recorded rotation destination", () => {
+    const exits = [{
+      decisionId: "a".repeat(64), marketId: "0x1111111111111111111111111111111111111111",
+      outcomeIndex: 0, shares: 10, quotedProceedsTst: 8, minimumProceedsTst: 7.84,
+      reason: "OPPORTUNITY_ROTATION" as const, status: "CONFIRMED" as const, createdAt: 10,
+      transactionHash: `0x${"b".repeat(64)}`,
+      rotationDestinationMarketId: "0x2222222222222222222222222222222222222222",
+    }];
+    expect(pendingRotationDestination(exits, [])).toBe(exits[0]!.rotationDestinationMarketId);
+    expect(pendingRotationDestination(exits, [{ status: "CONFIRMED", createdAt: 11 }])).toBeNull();
   });
 });
