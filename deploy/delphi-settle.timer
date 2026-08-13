@@ -1,10 +1,10 @@
 [Unit]
-Description=Sweep Delphi Arena terminal positions every ten minutes
+Description=Sweep Delphi Arena terminal positions every minute
 
 [Timer]
 OnActiveSec=2min
-OnUnitActiveSec=10min
-RandomizedDelaySec=20s
+OnUnitActiveSec=1min
+RandomizedDelaySec=5s
 Persistent=false
 
 [Install]

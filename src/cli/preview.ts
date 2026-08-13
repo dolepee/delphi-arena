@@ -14,23 +14,34 @@ for (const candidate of candidates) {
     const assumedAvailable = Math.max(book.availableTst, policy.minimumStartingTst);
     const budgetTst = orderBudget({
       policy,
+      assessment: candidate.assessment,
       totalEquityTst: assumedEquity,
       availableTst: assumedAvailable,
       deployedValueTst: book.deployedValueTst,
       existingMarketValueTst: candidate.existingMarketValue,
       mode,
     });
-    const accepted = await findQuotedPlan({ client, candidate, policy, budgetTst, mode });
+    const accepted = await findQuotedPlan({
+      client,
+      candidate,
+      policy,
+      budgetTst,
+      mode,
+      totalEquityTst: assumedEquity,
+    });
     previews.push(accepted ? {
       mode,
       marketId: accepted.market.id,
       outcome: accepted.market.outcomes[accepted.assessment.outcomeIndex],
+      evidenceClass: accepted.assessment.evidenceClass,
       shares: accepted.shares,
       quotedCostTst: accepted.quotedCostTst,
       maximumCostTst: accepted.maximumCostTst,
       averagePrice: accepted.averagePrice,
+      maximumAveragePrice: accepted.maximumAveragePrice,
       netEdge: accepted.netEdge,
       priceImpact: accepted.priceImpact,
+      worstCaseExpectedProfitTst: accepted.worstCaseExpectedProfitTst,
     } : { mode, marketId: candidate.market.id, accepted: false });
   }
 }

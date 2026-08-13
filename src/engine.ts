@@ -3,12 +3,103 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { loadAssessments, loadPolicy, stateDirectory } from "./config.js";
 import { TradeLedger } from "./ledger.js";
-import { orderBudget, selectCandidates } from "./planner.js";
+import { isDeterministicPublishedResult, maximumPriceImpact, orderBudget, rankQuotedPlans, selectCandidates } from "./planner.js";
 import { findQuotedPlan } from "./quote-plan.js";
 import { assertWriteReadiness, readBook } from "./runtime.js";
 import { sendAlert } from "./alerts.js";
 
 const sharesToRaw = (shares: number) => BigInt(Math.floor(shares * 1e6)) * 10n ** 12n;
+
+export function isPlanExecutableAt(
+  plan: {
+    assessment: { observedAt: string; expiresAt: string };
+    market: { resolvesAt?: string | null };
+  },
+  competitionEndsAt: string,
+  maximumAssessmentAgeMinutes: number,
+  now: number,
+): boolean {
+  return now < Date.parse(plan.assessment.expiresAt) &&
+    now - Date.parse(plan.assessment.observedAt) <= maximumAssessmentAgeMinutes * 60_000 &&
+    (!plan.market.resolvesAt || now < Date.parse(plan.market.resolvesAt)) &&
+    now < Date.parse(competitionEndsAt);
+}
+
+export function isPlanWithinBookLimits(input: {
+  plan: ReturnType<typeof rankQuotedPlans>[number];
+  policy: Awaited<ReturnType<typeof loadPolicy>>;
+  book: Awaited<ReturnType<typeof readBook>>;
+}): boolean {
+  const resultLane = input.plan.mode === "full" &&
+    isDeterministicPublishedResult(input.plan.assessment);
+  const marketPct = resultLane
+    ? input.policy.maximumPublishedResultMarketAllocationPct
+    : input.policy.maximumMarketAllocationPct;
+  const portfolioPct = resultLane
+    ? input.policy.maximumPublishedResultPortfolioAllocationPct
+    : input.policy.maximumPortfolioAllocationPct;
+  const sameOutcomeShares = input.book.positions
+    .filter((position) =>
+      position.marketId.toLowerCase() === input.plan.market.id.toLowerCase() &&
+      position.outcomeIndex === input.plan.assessment.outcomeIndex
+    )
+    .reduce((total, position) => total + position.shares, 0);
+  const opposingPosition = input.book.positions.some((position) =>
+    position.marketId.toLowerCase() === input.plan.market.id.toLowerCase() &&
+    position.outcomeIndex !== input.plan.assessment.outcomeIndex
+  );
+  const portfolioShares = input.book.positions.reduce(
+    (total, position) => total + position.shares,
+    0,
+  );
+  const freshMarket = input.book.markets.find((market) =>
+    market.id.toLowerCase() === input.plan.market.id.toLowerCase()
+  );
+  const freshSpot = freshMarket?.prices[input.plan.assessment.outcomeIndex];
+  return freshMarket?.status === "open" &&
+    freshSpot !== undefined &&
+    input.plan.maximumAveragePrice - freshSpot <= maximumPriceImpact(input.plan.assessment, input.policy) &&
+    !opposingPosition &&
+    input.plan.maximumCostTst <= input.book.availableTst &&
+    sameOutcomeShares + input.plan.shares <= input.book.totalEquityTst * marketPct / 100 &&
+    portfolioShares + input.plan.shares <= input.book.totalEquityTst * portfolioPct / 100;
+}
+
+export async function quoteCandidates(input: {
+  client: Pick<DelphiClient, "quoteBuy">;
+  candidates: ReturnType<typeof selectCandidates>;
+  policy: Awaited<ReturnType<typeof loadPolicy>>;
+  book: Awaited<ReturnType<typeof readBook>>;
+  mode: "canary" | "full";
+}) {
+  const quotedPlans = [];
+  const quoteFailures: string[] = [];
+  for (const candidate of input.candidates) {
+    const budgetTst = orderBudget({
+      policy: input.policy,
+      assessment: candidate.assessment,
+      totalEquityTst: input.book.totalEquityTst,
+      availableTst: input.book.availableTst,
+      deployedValueTst: input.book.deployedValueTst,
+      existingMarketValueTst: candidate.existingMarketValue,
+      mode: input.mode,
+    });
+    try {
+      const plan = await findQuotedPlan({
+        client: input.client,
+        candidate,
+        policy: input.policy,
+        budgetTst,
+        mode: input.mode,
+        totalEquityTst: input.book.totalEquityTst,
+      });
+      if (plan) quotedPlans.push(plan);
+    } catch (error) {
+      quoteFailures.push(`${candidate.market.id}:${String(error)}`);
+    }
+  }
+  return { plans: rankQuotedPlans(quotedPlans), quoteFailures };
+}
 
 export async function runTradingCycle(client: DelphiClient, now = Date.now()) {
   const [policy, assessments, book] = await Promise.all([
@@ -23,18 +114,14 @@ export async function runTradingCycle(client: DelphiClient, now = Date.now()) {
   if (candidates.length === 0) return { status: "NO_TRADE" as const, reason: "no fresh evidence-backed edge" };
 
   const mode = await assertWriteReadiness({ now, policy, book });
-  for (const candidate of candidates) {
-    const budgetTst = orderBudget({
-      policy,
-      totalEquityTst: book.totalEquityTst,
-      availableTst: book.availableTst,
-      deployedValueTst: book.deployedValueTst,
-      existingMarketValueTst: candidate.existingMarketValue,
-      mode,
-    });
-    const plan = await findQuotedPlan({ client, candidate, policy, budgetTst, mode });
-    if (plan) {
-        if (await ledger.get(plan.decisionId)) return { status: "DEDUPLICATED" as const, decisionId: plan.decisionId };
+  const { plans: quotedPlans, quoteFailures } = await quoteCandidates({ client, candidates, policy, book, mode });
+  for (const plan of quotedPlans) {
+        const executionNow = Date.now();
+        if (!isPlanExecutableAt(plan, policy.competitionEndsAt, policy.maximumAssessmentAgeMinutes, executionNow)) continue;
+        if (await ledger.get(plan.decisionId)) continue;
+        const freshBook = await readBook(client);
+        if (!isPlanWithinBookLimits({ plan, policy, book: freshBook })) continue;
+        const maximumCost = plan.maximumCostAtomic;
         await ledger.prepare({
           decisionId: plan.decisionId,
           marketId: plan.market.id,
@@ -43,12 +130,22 @@ export async function runTradingCycle(client: DelphiClient, now = Date.now()) {
           quotedCostTst: plan.quotedCostTst,
           createdAt: now,
         });
-        const maximumCost = BigInt(Math.ceil(plan.maximumCostTst * 1e6));
         await client.ensureTokenApproval({
           marketAddress: plan.market.id,
           minimumAmount: maximumCost,
           approveAmount: maximumCost,
         });
+        const postApprovalBook = await readBook(client);
+        if (!isPlanWithinBookLimits({ plan, policy, book: postApprovalBook })) {
+          await ledger.discardPrepared(plan.decisionId);
+          continue;
+        }
+        // Approval can itself wait for a transaction. Since the intent was
+        // journaled first, an uncertain approval failure remains fail-closed.
+        if (!isPlanExecutableAt(plan, policy.competitionEndsAt, policy.maximumAssessmentAgeMinutes, Date.now())) {
+          await ledger.discardPrepared(plan.decisionId);
+          continue;
+        }
         const result = await client.buyShares({
           marketAddress: plan.market.id,
           outcomeIdx: plan.assessment.outcomeIndex,
@@ -66,7 +163,12 @@ export async function runTradingCycle(client: DelphiClient, now = Date.now()) {
         }
         await sendAlert("POSITION OPENED", `${plan.market.question}\n${plan.market.outcomes[plan.assessment.outcomeIndex]} | ${plan.shares} shares | ${plan.quotedCostTst.toFixed(4)} TST | net edge ${(plan.netEdge * 100).toFixed(2)}%\n${result.transactionHash}`);
         return { status: "TRADED" as const, plan, transactionHash: result.transactionHash };
-    }
   }
-  return { status: "NO_TRADE" as const, reason: "all quotes failed edge, impact, or allocation limits" };
+  return {
+    status: "NO_TRADE" as const,
+    reason: quotedPlans.length > 0
+      ? "all valid quotes were already executed"
+      : "all quotes failed edge, impact, or allocation limits",
+    quoteFailures,
+  };
 }

@@ -9,6 +9,18 @@ function minimumNetEdge(assessment: Assessment, policy: Policy): number {
   return policy.minimumNetEdge;
 }
 
+export function isDeterministicPublishedResult(assessment: Assessment): boolean {
+  return assessment.evidenceClass === "published_result" &&
+    assessment.confidence === "high" &&
+    assessment.probability === 0.99;
+}
+
+export function maximumPriceImpact(assessment: Assessment, policy: Policy): number {
+  return isDeterministicPublishedResult(assessment)
+    ? policy.maximumPublishedResultPriceImpact
+    : policy.maximumPriceImpact;
+}
+
 export function selectCandidates(input: {
   now: number;
   policy: Policy;
@@ -16,6 +28,10 @@ export function selectCandidates(input: {
   positions: PositionView[];
   assessments: Assessment[];
 }): Candidate[] {
+  const existingPortfolioShares = input.positions.reduce(
+    (total, position) => total + position.shares,
+    0,
+  );
   const markets = new Map(input.markets.map((market) => [market.id.toLowerCase(), market]));
   const positionsByMarket = new Map<string, PositionView[]>();
   for (const position of input.positions) {
@@ -25,6 +41,7 @@ export function selectCandidates(input: {
 
   return input.assessments.flatMap((assessment) => {
     if (assessment.status !== "actionable" || assessment.confidence === "low") return [];
+    if (assessment.evidenceClass === "published_result" && !isDeterministicPublishedResult(assessment)) return [];
     const observedAt = Date.parse(assessment.observedAt);
     if (input.now >= Date.parse(assessment.expiresAt)) return [];
     if (input.now - observedAt > input.policy.maximumAssessmentAgeMinutes * 60_000) return [];
@@ -43,9 +60,21 @@ export function selectCandidates(input: {
       (total, position) => total + position.shares * position.markPrice,
       0,
     );
+    const existingMarketShares = existing.reduce(
+      (total, position) => total + position.shares,
+      0,
+    );
     const rawEdge = assessment.probability - spotPrice;
     if (rawEdge < minimumNetEdge(assessment, input.policy)) return [];
-    return [{ assessment, market, spotPrice, rawEdge, existingMarketValue }];
+    return [{
+      assessment,
+      market,
+      spotPrice,
+      rawEdge,
+      existingMarketValue,
+      existingMarketShares,
+      existingPortfolioShares,
+    }];
   }).sort((left, right) =>
     right.rawEdge * confidenceWeight[right.assessment.confidence] -
     left.rawEdge * confidenceWeight[left.assessment.confidence]
@@ -72,26 +101,61 @@ export function validateQuote(input: {
   quotedCostTst: number;
   budgetTst: number;
   mode: "canary" | "full";
+  totalEquityTst: number;
 }): QuotedPlan | null {
-  if (input.shares <= 0 || input.quotedCostTst <= 0 || input.quotedCostTst > input.budgetTst) return null;
+  if (
+    !Number.isFinite(input.shares) ||
+    !Number.isFinite(input.quotedCostTst) ||
+    !Number.isFinite(input.budgetTst) ||
+    input.shares <= 0 ||
+    input.quotedCostTst <= 0 ||
+    input.quotedCostTst > input.budgetTst
+  ) return null;
+  // quoteBuy().tokensIn is the SDK's total cash-in and already includes the
+  // market fee. Apply slippage once, then gate the worst executable price.
+  const maximumCostAtomic = BigInt(Math.ceil(
+    input.quotedCostTst * (1 + input.policy.slippagePct / 100) * 1e6,
+  ));
+  const maximumCostTst = Number(maximumCostAtomic) / 1e6;
+  if (maximumCostTst > input.budgetTst) return null;
   const averagePrice = input.quotedCostTst / input.shares;
-  const feePerShare = averagePrice * input.candidate.market.tradingFeePct / 100;
-  const netEdge = input.candidate.assessment.probability - averagePrice - feePerShare;
-  const priceImpact = averagePrice - input.candidate.spotPrice;
+  const maximumAveragePrice = maximumCostTst / input.shares;
+  const netEdge = input.candidate.assessment.probability - maximumAveragePrice;
+  const priceImpact = maximumAveragePrice - input.candidate.spotPrice;
+  const worstCaseExpectedProfitTst =
+    input.shares * input.candidate.assessment.probability - maximumCostTst;
+  const resultLane = input.mode === "full" && isDeterministicPublishedResult(input.candidate.assessment);
+  const marketAllocationPct = resultLane
+    ? input.policy.maximumPublishedResultMarketAllocationPct
+    : input.policy.maximumMarketAllocationPct;
+  const portfolioAllocationPct = resultLane
+    ? input.policy.maximumPublishedResultPortfolioAllocationPct
+    : input.policy.maximumPortfolioAllocationPct;
+  // Binary outcome shares cannot be worth more than 1 TST each. This face-value
+  // ceiling is conservative and remains valid even when LMSR marginal price is
+  // above the average cash paid.
+  const maximumPostTradeMarketValueTst =
+    input.candidate.existingMarketShares + input.shares;
+  const maximumPostTradePortfolioValueTst =
+    input.candidate.existingPortfolioShares + input.shares;
   if (
     netEdge < minimumNetEdge(input.candidate.assessment, input.policy) ||
-    priceImpact > input.policy.maximumPriceImpact
+    priceImpact > maximumPriceImpact(input.candidate.assessment, input.policy) ||
+    worstCaseExpectedProfitTst <= 0 ||
+    maximumPostTradeMarketValueTst > input.totalEquityTst * marketAllocationPct / 100 ||
+    maximumPostTradePortfolioValueTst > input.totalEquityTst * portfolioAllocationPct / 100
   ) return null;
-  const maximumCostTst = input.quotedCostTst * (1 + input.policy.slippagePct / 100);
-  if (maximumCostTst > input.budgetTst) return null;
   return {
     ...input.candidate,
     shares: input.shares,
     quotedCostTst: input.quotedCostTst,
     maximumCostTst,
+    maximumCostAtomic,
     averagePrice,
+    maximumAveragePrice,
     netEdge,
     priceImpact,
+    worstCaseExpectedProfitTst,
     mode: input.mode,
     decisionId: planDigest(input.candidate, input.shares, input.quotedCostTst),
   };
@@ -99,16 +163,36 @@ export function validateQuote(input: {
 
 export function orderBudget(input: {
   policy: Policy;
+  assessment: Assessment;
   totalEquityTst: number;
   availableTst: number;
   deployedValueTst: number;
   existingMarketValueTst: number;
   mode: "canary" | "full";
 }): number {
-  const marketRoom = input.totalEquityTst * input.policy.maximumMarketAllocationPct / 100 - input.existingMarketValueTst;
-  const portfolioRoom = input.totalEquityTst * input.policy.maximumPortfolioAllocationPct / 100 - input.deployedValueTst;
-  const modeCap = input.mode === "canary" ? input.policy.canaryMaximumTst : input.policy.maximumOrderTst;
+  const resultLane = input.mode === "full" && isDeterministicPublishedResult(input.assessment);
+  const marketAllocationPct = resultLane
+    ? input.policy.maximumPublishedResultMarketAllocationPct
+    : input.policy.maximumMarketAllocationPct;
+  const portfolioAllocationPct = resultLane
+    ? input.policy.maximumPublishedResultPortfolioAllocationPct
+    : input.policy.maximumPortfolioAllocationPct;
+  const marketRoom = input.totalEquityTst * marketAllocationPct / 100 - input.existingMarketValueTst;
+  const portfolioRoom = input.totalEquityTst * portfolioAllocationPct / 100 - input.deployedValueTst;
+  const modeCap = input.mode === "canary"
+    ? input.policy.canaryMaximumTst
+    : resultLane
+      ? input.policy.maximumPublishedResultOrderTst
+      : input.policy.maximumOrderTst;
   const budget = Math.max(0, Math.min(input.availableTst, marketRoom, portfolioRoom, modeCap));
   if (input.mode === "full" && budget < input.policy.minimumFullOrderTst) return 0;
   return budget;
+}
+
+export function rankQuotedPlans(plans: QuotedPlan[]): QuotedPlan[] {
+  return [...plans].sort((left, right) =>
+    right.worstCaseExpectedProfitTst - left.worstCaseExpectedProfitTst ||
+    right.netEdge - left.netEdge ||
+    left.decisionId.localeCompare(right.decisionId)
+  );
 }
