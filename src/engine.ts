@@ -10,6 +10,14 @@ import { sendAlert } from "./alerts.js";
 
 const sharesToRaw = (shares: number) => BigInt(Math.floor(shares * 1e6)) * 10n ** 12n;
 
+export function isPlanExecutableAt(
+  plan: { assessment: { expiresAt: string } },
+  competitionEndsAt: string,
+  now: number,
+): boolean {
+  return now < Date.parse(plan.assessment.expiresAt) && now < Date.parse(competitionEndsAt);
+}
+
 export async function quoteCandidates(input: {
   client: Pick<DelphiClient, "quoteBuy">;
   candidates: ReturnType<typeof selectCandidates>;
@@ -60,6 +68,8 @@ export async function runTradingCycle(client: DelphiClient, now = Date.now()) {
   const mode = await assertWriteReadiness({ now, policy, book });
   const { plans: quotedPlans, quoteFailures } = await quoteCandidates({ client, candidates, policy, book, mode });
   for (const plan of quotedPlans) {
+        const executionNow = Date.now();
+        if (!isPlanExecutableAt(plan, policy.competitionEndsAt, executionNow)) continue;
         if (await ledger.get(plan.decisionId)) continue;
         await ledger.prepare({
           decisionId: plan.decisionId,

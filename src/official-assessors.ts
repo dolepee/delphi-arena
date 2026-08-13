@@ -20,6 +20,21 @@ interface NycExecutiveOrderSearch {
   results?: unknown;
 }
 
+export async function firstSuccessfulAssessment<T>(
+  items: T[],
+  evaluate: (item: T) => Promise<Assessment | null>,
+): Promise<Assessment | null> {
+  for (const item of items) {
+    try {
+      const assessment = await evaluate(item);
+      if (assessment) return assessment;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
 function exactNycExecutiveOrders(results: unknown): NycExecutiveOrderResult[] {
   if (!Array.isArray(results)) return [];
   return results.filter((value): value is NycExecutiveOrderResult => {
@@ -271,34 +286,31 @@ export async function generateOfficialAssessments(markets: MarketView[], now = D
         const searchBody = await searchResponse.text();
         const search = JSON.parse(searchBody) as NycExecutiveOrderSearch;
         const results = exactNycExecutiveOrders(search.results);
-        for (const result of results) {
-          if (typeof result.link !== "string" || typeof result.title !== "string") continue;
-          const number = /No\. (\d+)$/u.exec(result.title)?.[1];
-          if (!number) continue;
-          const detailUrl = new URL(result.link, "https://www.nyc.gov").toString();
-          const pdfUrl = `https://www.nyc.gov/content/dam/nycgov/mayors-office/downloads/pdf/executive-orders/2026/eo-${number}.pdf`;
-          const [detailResponse, pdfResponse] = await Promise.all([
-            fetch(detailUrl, { headers: { "user-agent": "Conviction-Delphi-Arena/1.0" }, signal: AbortSignal.timeout(15_000) }),
-            fetch(pdfUrl, { headers: { "user-agent": "Conviction-Delphi-Arena/1.0" }, signal: AbortSignal.timeout(15_000) }),
-          ]);
-          if (!detailResponse.ok || !pdfResponse.ok) continue;
-          const pdfBody = new Uint8Array(await pdfResponse.arrayBuffer());
-          const assessment = await assessMamdaniExecutiveOrder({
-            market,
-            searchBody,
-            detailBody: await detailResponse.text(),
-            pdfBody,
-            pdfText: await extractPdfText(pdfBody),
-            sourceUrl: NYC_EXECUTIVE_ORDER_SEARCH_URL,
-            detailUrl,
-            pdfUrl,
-            now,
+        const assessment = await firstSuccessfulAssessment(results, async (result) => {
+            if (typeof result.link !== "string" || typeof result.title !== "string") return null;
+            const number = /No\. (\d+)$/u.exec(result.title)?.[1];
+            if (!number) return null;
+            const detailUrl = new URL(result.link, "https://www.nyc.gov").toString();
+            const pdfUrl = `https://www.nyc.gov/content/dam/nycgov/mayors-office/downloads/pdf/executive-orders/2026/eo-${number}.pdf`;
+            const [detailResponse, pdfResponse] = await Promise.all([
+              fetch(detailUrl, { headers: { "user-agent": "Conviction-Delphi-Arena/1.0" }, signal: AbortSignal.timeout(15_000) }),
+              fetch(pdfUrl, { headers: { "user-agent": "Conviction-Delphi-Arena/1.0" }, signal: AbortSignal.timeout(15_000) }),
+            ]);
+            if (!detailResponse.ok || !pdfResponse.ok) return null;
+            const pdfBody = new Uint8Array(await pdfResponse.arrayBuffer());
+            return assessMamdaniExecutiveOrder({
+              market,
+              searchBody,
+              detailBody: await detailResponse.text(),
+              pdfBody,
+              pdfText: await extractPdfText(pdfBody),
+              sourceUrl: NYC_EXECUTIVE_ORDER_SEARCH_URL,
+              detailUrl,
+              pdfUrl,
+              now,
+            });
           });
-          if (assessment) {
-            assessments.push(assessment);
-            break;
-          }
-        }
+        if (assessment) assessments.push(assessment);
       } catch {
         continue;
       }

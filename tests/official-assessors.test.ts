@@ -5,6 +5,7 @@ import {
   assessCrs35Schedule,
   assessMamdaniExecutiveOrder,
   assessSilsoSunspot,
+  firstSuccessfulAssessment,
   generateOfficialAssessments,
 } from "../src/official-assessors.js";
 
@@ -229,5 +230,16 @@ describe("NYC non-emergency executive-order release", () => {
       pdfUrl,
       now,
     })).not.toBeNull();
+  });
+});
+
+describe("official-result fault isolation", () => {
+  it("continues after one official record fails and returns the next valid assessment", async () => {
+    const expected = { marketId: MAMDANI_MARKET.id } as never;
+    const assessment = await firstSuccessfulAssessment(["broken", "valid"], async (item) => {
+      if (item === "broken") throw new Error("malformed PDF");
+      return expected;
+    });
+    expect(assessment).toBe(expected);
   });
 });

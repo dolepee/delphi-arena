@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Candidate, Policy } from "../src/model.js";
-import { quoteCandidates } from "../src/engine.js";
+import { isPlanExecutableAt, quoteCandidates } from "../src/engine.js";
 
 const policy: Policy = {
   competitionEndsAt: "2026-08-23T23:59:00.000Z", minimumStartingTst: 1000, minimumGasEth: 0.001,
@@ -44,5 +44,15 @@ describe("candidate quote isolation", () => {
     expect(result.quoteFailures).toHaveLength(1);
     expect(result.plans).toHaveLength(1);
     expect(result.plans[0]?.market.id).toBe(large.market.id);
+  });
+});
+
+describe("pre-write freshness", () => {
+  const plan = { assessment: { expiresAt: "2026-08-13T12:02:00.000Z" } };
+
+  it("refuses a quoted plan once its evidence or the competition has expired", () => {
+    expect(isPlanExecutableAt(plan, "2026-08-23T23:59:00.000Z", Date.parse("2026-08-13T12:01:59.999Z"))).toBe(true);
+    expect(isPlanExecutableAt(plan, "2026-08-23T23:59:00.000Z", Date.parse("2026-08-13T12:02:00.000Z"))).toBe(false);
+    expect(isPlanExecutableAt(plan, "2026-08-13T12:01:00.000Z", Date.parse("2026-08-13T12:01:00.000Z"))).toBe(false);
   });
 });
