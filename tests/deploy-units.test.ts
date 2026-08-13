@@ -10,8 +10,10 @@ describe("production systemd units", () => {
       readFile(new URL("../deploy/delphi-settle.service", import.meta.url), "utf8"),
     ]);
 
+    expect(cycle).toContain(`/usr/bin/flock -n -E 0 ${sharedLock}`);
+    expect(settle).toContain(`/usr/bin/flock -w 20 -E 0 ${sharedLock}`);
+
     for (const unit of [cycle, settle]) {
-      expect(unit).toContain(`/usr/bin/flock -n -E 0 ${sharedLock}`);
       expect(unit).toContain("ReadWritePaths=/var/lib/delphi-arena");
     }
   });
