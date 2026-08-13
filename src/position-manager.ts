@@ -3,7 +3,7 @@ import type { DelphiClient } from "@gensyn-ai/gensyn-delphi-sdk";
 import { resolve } from "node:path";
 import { sendAlert } from "./alerts.js";
 import { loadAssessments, loadPolicy, stateDirectory } from "./config.js";
-import { assessmentEvidenceFingerprint, ExitLedger } from "./exit-ledger.js";
+import { assessmentEvidenceFingerprint, blocksEntryForAssessment, ExitLedger } from "./exit-ledger.js";
 import type { ExitRecord } from "./exit-ledger.js";
 import { TradeLedger } from "./ledger.js";
 import type { TradeRecord } from "./ledger.js";
@@ -193,7 +193,13 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
       assessments,
     }).filter((candidate) =>
       candidate.assessment.confidence === "high" &&
-      candidate.assessment.evidenceClass === "published_result"
+      candidate.assessment.evidenceClass === "published_result" &&
+      !blocksEntryForAssessment(
+        exits,
+        candidate.market.id,
+        candidate.assessment.outcomeIndex,
+        assessmentEvidenceFingerprint(candidate.assessment),
+      )
     );
     const { plans: executableAlternatives } = await quoteCandidates({
       client,
@@ -264,7 +270,13 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
       assessments,
     }).filter((candidate) =>
       candidate.assessment.confidence === "high" &&
-      candidate.assessment.evidenceClass === "published_result"
+      candidate.assessment.evidenceClass === "published_result" &&
+      !blocksEntryForAssessment(
+        exits,
+        candidate.market.id,
+        candidate.assessment.outcomeIndex,
+        assessmentEvidenceFingerprint(candidate.assessment),
+      )
     );
     const { plans: freshExecutableAlternatives } = await quoteCandidates({
       client,
@@ -333,7 +345,13 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
       }).filter((candidate) =>
         candidate.market.id.toLowerCase() === destinationMarket.id.toLowerCase() &&
         candidate.assessment.confidence === "high" &&
-        candidate.assessment.evidenceClass === "published_result"
+        candidate.assessment.evidenceClass === "published_result" &&
+        !blocksEntryForAssessment(
+          exits,
+          candidate.market.id,
+          candidate.assessment.outcomeIndex,
+          assessmentEvidenceFingerprint(candidate.assessment),
+        )
       );
       const { plans: destinationPlans } = await quoteCandidates({
         client,
