@@ -5,7 +5,9 @@ import { findQuotedPlan } from "../src/quote-plan.js";
 const policy: Policy = {
   competitionEndsAt: "2026-08-24T13:00:00.000Z", minimumStartingTst: 1000, minimumGasEth: 0.001,
   minimumNetEdge: 0.08, minimumPublishedResultNetEdge: 0.02, minimumOfficialScheduleNetEdge: 0.04, maximumMarketAllocationPct: 35, maximumPortfolioAllocationPct: 90,
-  maximumOrderTst: 250, minimumFullOrderTst: 5, maximumPriceImpact: 0.04, slippagePct: 2, maximumNewTradesPerCycle: 1,
+  maximumOrderTst: 250, maximumPublishedResultMarketAllocationPct: 85, maximumPublishedResultPortfolioAllocationPct: 95,
+  maximumPublishedResultOrderTst: 850, minimumFullOrderTst: 5, maximumPriceImpact: 0.04,
+  maximumPublishedResultPriceImpact: 0.2, slippagePct: 2, maximumNewTradesPerCycle: 1,
   minimumEvidenceSources: 1, maximumAssessmentAgeMinutes: 30, canaryMaximumTst: 1, qualificationFallback: "none",
 };
 const candidate = {

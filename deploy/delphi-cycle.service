@@ -9,10 +9,9 @@ User=delphi
 Group=delphi
 WorkingDirectory=/opt/delphi-arena/current
 EnvironmentFile=/etc/delphi-arena/delphi.env
-ExecStart=/usr/bin/npm run cycle
+ExecStart=/usr/bin/flock -n -E 0 /var/lib/delphi-arena/write.lock /usr/bin/npm run cycle
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/var/lib/delphi-arena
-

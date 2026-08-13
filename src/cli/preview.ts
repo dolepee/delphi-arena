@@ -14,6 +14,7 @@ for (const candidate of candidates) {
     const assumedAvailable = Math.max(book.availableTst, policy.minimumStartingTst);
     const budgetTst = orderBudget({
       policy,
+      assessment: candidate.assessment,
       totalEquityTst: assumedEquity,
       availableTst: assumedAvailable,
       deployedValueTst: book.deployedValueTst,
@@ -25,12 +26,15 @@ for (const candidate of candidates) {
       mode,
       marketId: accepted.market.id,
       outcome: accepted.market.outcomes[accepted.assessment.outcomeIndex],
+      evidenceClass: accepted.assessment.evidenceClass,
       shares: accepted.shares,
       quotedCostTst: accepted.quotedCostTst,
       maximumCostTst: accepted.maximumCostTst,
       averagePrice: accepted.averagePrice,
+      maximumAveragePrice: accepted.maximumAveragePrice,
       netEdge: accepted.netEdge,
       priceImpact: accepted.priceImpact,
+      worstCaseExpectedProfitTst: accepted.worstCaseExpectedProfitTst,
     } : { mode, marketId: candidate.market.id, accepted: false });
   }
 }

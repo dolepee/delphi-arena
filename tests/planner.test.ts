@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Assessment, MarketView, Policy, PositionView } from "../src/model.js";
-import { orderBudget, selectCandidates, validateQuote } from "../src/planner.js";
+import { orderBudget, rankQuotedPlans, selectCandidates, validateQuote } from "../src/planner.js";
 
 const NOW = Date.parse("2026-08-12T12:00:00.000Z");
 const POLICY: Policy = {
@@ -13,8 +13,12 @@ const POLICY: Policy = {
   maximumMarketAllocationPct: 35,
   maximumPortfolioAllocationPct: 90,
   maximumOrderTst: 250,
+  maximumPublishedResultMarketAllocationPct: 85,
+  maximumPublishedResultPortfolioAllocationPct: 95,
+  maximumPublishedResultOrderTst: 850,
   minimumFullOrderTst: 5,
   maximumPriceImpact: 0.04,
+  maximumPublishedResultPriceImpact: 0.2,
   slippagePct: 2,
   maximumNewTradesPerCycle: 1,
   minimumEvidenceSources: 1,
@@ -103,6 +107,14 @@ describe("LMSR quote and allocation controls", () => {
       quotedCostTst: 9.55,
       budgetTst: 10,
       mode: "full",
+    })).toBeNull();
+    expect(validateQuote({
+      candidate: releasedCandidate!,
+      policy: POLICY,
+      shares: 10,
+      quotedCostTst: 9.5,
+      budgetTst: 10,
+      mode: "full",
     })).not.toBeNull();
     expect(selectCandidates({
       now: NOW,
@@ -111,6 +123,37 @@ describe("LMSR quote and allocation controls", () => {
       positions: [],
       assessments: [{ ...released, evidenceClass: "forecast" }],
     })).toHaveLength(0);
+  });
+
+  it.each([
+    { ...ASSESSMENT, evidenceClass: "published_result" as const, confidence: "medium" as const, probability: 0.99 },
+    { ...ASSESSMENT, evidenceClass: "published_result" as const, confidence: "high" as const, probability: 0.98 },
+  ])("rejects a published-result label without exact high-confidence evidence", (assessment) => {
+    expect(selectCandidates({
+      now: NOW,
+      policy: POLICY,
+      markets: [MARKET],
+      positions: [],
+      assessments: [assessment],
+    })).toHaveLength(0);
+  });
+
+  it("counts the SDK total-cash quote fee only once and gates slippage before edge", () => {
+    const feeSensitiveCandidate = {
+      ...candidate,
+      assessment: { ...candidate.assessment, probability: 0.694 },
+      rawEdge: 0.094,
+    };
+    const accepted = validateQuote({
+      candidate: feeSensitiveCandidate,
+      policy: POLICY,
+      shares: 10,
+      quotedCostTst: 6,
+      budgetTst: 7,
+      mode: "full",
+    });
+    expect(accepted?.maximumAveragePrice).toBeCloseTo(0.612);
+    expect(accepted?.netEdge).toBeCloseTo(0.082);
   });
 
   it("uses an intermediate floor for decisive official schedules", () => {
@@ -127,20 +170,55 @@ describe("LMSR quote and allocation controls", () => {
       candidate: candidate!,
       policy: POLICY,
       shares: 10,
-      quotedCostTst: 9.45,
+      quotedCostTst: 9.3,
       budgetTst: 10,
       mode: "full",
     })).not.toBeNull();
   });
 
   it("caps the canary and full allocation independently", () => {
-    expect(orderBudget({ policy: POLICY, totalEquityTst: 1000, availableTst: 1000, deployedValueTst: 0, existingMarketValueTst: 0, mode: "canary" })).toBe(1);
-    expect(orderBudget({ policy: POLICY, totalEquityTst: 1000, availableTst: 1000, deployedValueTst: 0, existingMarketValueTst: 0, mode: "full" })).toBe(250);
-    expect(orderBudget({ policy: POLICY, totalEquityTst: 1000, availableTst: 1000, deployedValueTst: 890, existingMarketValueTst: 0, mode: "full" })).toBe(10);
+    expect(orderBudget({ policy: POLICY, assessment: ASSESSMENT, totalEquityTst: 1000, availableTst: 1000, deployedValueTst: 0, existingMarketValueTst: 0, mode: "canary" })).toBe(1);
+    expect(orderBudget({ policy: POLICY, assessment: ASSESSMENT, totalEquityTst: 1000, availableTst: 1000, deployedValueTst: 0, existingMarketValueTst: 0, mode: "full" })).toBe(250);
+    expect(orderBudget({ policy: POLICY, assessment: ASSESSMENT, totalEquityTst: 1000, availableTst: 1000, deployedValueTst: 890, existingMarketValueTst: 0, mode: "full" })).toBe(10);
+  });
+
+  it("raises limits only for an exact published result", () => {
+    const published = { ...ASSESSMENT, evidenceClass: "published_result" as const, confidence: "high" as const, probability: 0.99 };
+    const scheduled = { ...ASSESSMENT, evidenceClass: "official_schedule" as const, confidence: "high" as const, probability: 0.99 };
+    expect(orderBudget({ policy: POLICY, assessment: published, totalEquityTst: 1000, availableTst: 1000, deployedValueTst: 0, existingMarketValueTst: 0, mode: "full" })).toBe(850);
+    expect(orderBudget({ policy: POLICY, assessment: published, totalEquityTst: 1000, availableTst: 1000, deployedValueTst: 0, existingMarketValueTst: 0, mode: "canary" })).toBe(1);
+    expect(orderBudget({ policy: POLICY, assessment: scheduled, totalEquityTst: 1000, availableTst: 1000, deployedValueTst: 0, existingMarketValueTst: 0, mode: "full" })).toBe(250);
   });
 
   it("blocks full-live dust while preserving the bounded canary", () => {
-    expect(orderBudget({ policy: POLICY, totalEquityTst: 1000, availableTst: 4.99, deployedValueTst: 0, existingMarketValueTst: 0, mode: "full" })).toBe(0);
-    expect(orderBudget({ policy: POLICY, totalEquityTst: 1000, availableTst: 1, deployedValueTst: 0, existingMarketValueTst: 0, mode: "canary" })).toBe(1);
+    expect(orderBudget({ policy: POLICY, assessment: ASSESSMENT, totalEquityTst: 1000, availableTst: 4.99, deployedValueTst: 0, existingMarketValueTst: 0, mode: "full" })).toBe(0);
+    expect(orderBudget({ policy: POLICY, assessment: ASSESSMENT, totalEquityTst: 1000, availableTst: 1, deployedValueTst: 0, existingMarketValueTst: 0, mode: "canary" })).toBe(1);
+  });
+
+  it("ranks by worst-case expected TST profit before percentage edge", () => {
+    const smallHighEdge = validateQuote({
+      candidate,
+      policy: POLICY,
+      shares: 5,
+      quotedCostTst: 3,
+      budgetTst: 100,
+      mode: "full",
+    })!;
+    const largeLowerEdge = validateQuote({
+      candidate: {
+        ...candidate,
+        spotPrice: 0.65,
+        market: { ...candidate.market, prices: [0.65, 0.35] },
+        assessment: { ...candidate.assessment, probability: 0.82 },
+        rawEdge: 0.17,
+      },
+      policy: POLICY,
+      shares: 100,
+      quotedCostTst: 68,
+      budgetTst: 100,
+      mode: "full",
+    })!;
+    expect(smallHighEdge.netEdge).toBeGreaterThan(largeLowerEdge.netEdge);
+    expect(rankQuotedPlans([smallHighEdge, largeLowerEdge])[0]).toBe(largeLowerEdge);
   });
 });

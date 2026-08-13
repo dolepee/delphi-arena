@@ -3,6 +3,7 @@ import type { MarketView } from "../src/model.js";
 import {
   assessArcticExtent,
   assessCrs35Schedule,
+  assessMamdaniExecutiveOrder,
   assessSilsoSunspot,
   generateOfficialAssessments,
 } from "../src/official-assessors.js";
@@ -44,6 +45,18 @@ describe("NSIDC empirical assessment", () => {
   it("refuses sparse history", () => {
     const body = JSON.stringify({ "2026-08-09": 6.0, "2026-08-10": 5.896 });
     expect(assessArcticExtent({ market: MARKET, body, sourceUrl: "https://nsidc.org/official.json", now: Date.parse("2026-08-11T21:00:00.000Z") })).toBeNull();
+  });
+
+  it("selects No with 0.99 probability when the exact target-date value is above the threshold", () => {
+    const assessment = assessArcticExtent({
+      market: MARKET,
+      body: JSON.stringify({ "2026-08-12": 5.9 }),
+      sourceUrl: "https://nsidc.org/official.json",
+      now: Date.parse("2026-08-12T12:00:00.000Z"),
+    });
+    expect(assessment?.outcomeIndex).toBe(1);
+    expect(assessment?.evidenceClass).toBe("published_result");
+    expect(assessment?.probability).toBe(0.99);
   });
 });
 
@@ -141,5 +154,65 @@ describe("NASA CRS-35 official schedule assessment", () => {
     const assessments = await generateOfficialAssessments([SILSO_MARKET, CRS_MARKET], now);
     expect(assessments).toHaveLength(1);
     expect(assessments[0]?.marketId).toBe(CRS_MARKET.id);
+  });
+});
+
+const MAMDANI_MARKET: MarketView = {
+  id: "0x4444444444444444444444444444444444444444",
+  question: "Will a Mamdani non-emergency NYC executive order dated Aug 9-15, 2026 be publicly posted by settlement?",
+  outcomes: ["Yes", "No"],
+  status: "open",
+  resolvesAt: "2026-08-16T13:59:00.000Z",
+  prices: [0.31, 0.69],
+  tradingFeePct: 0.5,
+  dataSources: [],
+};
+
+describe("NYC non-emergency executive-order release", () => {
+  const now = Date.parse("2026-08-13T12:00:00.000Z");
+  const sourceUrl = "https://www.nyc.gov/bin/nyc/articlesearch.json?pageSize=100&currentPage=1&types=executive-orders&fromDate=2026-08-09&toDate=2026-08-15";
+  const detailUrl = "https://www.nyc.gov/mayors-office/news/2026/08/executive-order-no--20.html";
+  const pdfUrl = "https://www.nyc.gov/content/dam/nycgov/mayors-office/downloads/pdf/executive-orders/2026/eo-20.pdf";
+  const pdfText = "THE CITY OF NEW YORK OFFICE OF THE MAYOR EXECUTIVE ORDER No. 20 August 13, 2026 A BOUNDED ORDER Zahran Kwame Mamdani Mayor";
+
+  it("requires the index, matching detail page, and same-number signed official PDF", async () => {
+    const pdfBody = new TextEncoder().encode(pdfText);
+    const assessment = await assessMamdaniExecutiveOrder({
+      market: MAMDANI_MARKET,
+      searchBody: JSON.stringify({ results: [{
+        link: "/mayors-office/news/2026/08/executive-order-no--20.html",
+        title: "Executive Order No. 20",
+        articleDate: "August 13, 2026",
+      }] }),
+      detailBody: '<h1 class="headline">Executive Order No. 20</h1><a href="/content/dam/nycgov/mayors-office/downloads/pdf/executive-orders/2026/eo-20.pdf">Download</a>',
+      pdfBody,
+      pdfText,
+      sourceUrl,
+      detailUrl,
+      pdfUrl,
+      now,
+    });
+    expect(assessment?.outcomeIndex).toBe(0);
+    expect(assessment?.evidenceClass).toBe("published_result");
+    expect(assessment?.probability).toBe(0.99);
+  });
+
+  it("refuses absence, emergency orders, ambiguous multiple matches, and a mismatched PDF", async () => {
+    const pdfBody = new TextEncoder().encode(pdfText);
+    const base = {
+      market: MAMDANI_MARKET,
+      detailBody: '<h1>Executive Order No. 20</h1><a href="/content/dam/nycgov/mayors-office/downloads/pdf/executive-orders/2026/eo-20.pdf">Download</a>',
+      pdfBody,
+      pdfText,
+      sourceUrl,
+      detailUrl,
+      pdfUrl,
+      now,
+    };
+    expect(await assessMamdaniExecutiveOrder({ ...base, searchBody: JSON.stringify({ results: [] }) })).toBeNull();
+    expect(await assessMamdaniExecutiveOrder({ ...base, searchBody: JSON.stringify({ results: [{ link: "/mayors-office/news/2026/08/emergency-executive-order-no--1-44.html", title: "Emergency Executive Order No. 1.44", articleDate: "August 13, 2026" }] }) })).toBeNull();
+    const match = { link: "/mayors-office/news/2026/08/executive-order-no--20.html", title: "Executive Order No. 20", articleDate: "August 13, 2026" };
+    expect(await assessMamdaniExecutiveOrder({ ...base, searchBody: JSON.stringify({ results: [match, match] }) })).toBeNull();
+    expect(await assessMamdaniExecutiveOrder({ ...base, pdfText: "EXECUTIVE ORDER No. 19 July 23, 2026 Zahran Kwame Mamdani Mayor", searchBody: JSON.stringify({ results: [match] }) })).toBeNull();
   });
 });

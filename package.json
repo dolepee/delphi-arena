@@ -22,7 +22,11 @@
   "dependencies": {
     "@gensyn-ai/gensyn-delphi-sdk": "2.1.0",
     "dotenv": "^17.2.3",
+    "pdf-parse": "2.4.5",
     "zod": "^4.1.12"
+  },
+  "overrides": {
+    "axios": "1.19.0"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",
