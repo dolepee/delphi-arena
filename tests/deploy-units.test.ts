@@ -22,8 +22,7 @@ describe("production systemd units", () => {
       "utf8",
     );
 
-    expect(timer).toContain("OnCalendar=*-*-* *:*:30");
-    expect(timer).toContain("AccuracySec=1s");
+    expect(timer).toContain("OnUnitActiveSec=1min");
     expect(timer).toContain("Persistent=false");
   });
 });
