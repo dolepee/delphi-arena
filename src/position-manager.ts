@@ -127,6 +127,9 @@ export function positionLedgerGeneration(input: {
 export async function runPositionManagementCycle(client: DelphiClient, now = Date.now()) {
   const [policy, assessments, book] = await Promise.all([loadPolicy(), loadAssessments(), readBook(client)]);
   await assertMaintenanceReadiness(book);
+  if (book.gasEth < policy.minimumGasEth) {
+    throw new Error(`position management requires at least ${policy.minimumGasEth} ETH gas reserve`);
+  }
   if (await activationMode() !== "full") {
     throw new Error("position management requires full-live approval");
   }
@@ -176,6 +179,7 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
     ) continue;
     const freshBook = await readBook(client);
     await assertMaintenanceReadiness(freshBook);
+    if (freshBook.gasEth < policy.minimumGasEth) continue;
     const freshMarket = freshBook.markets.find((candidate) =>
       candidate.id.toLowerCase() === market.id.toLowerCase()
     );
