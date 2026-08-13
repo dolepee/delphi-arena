@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Assessment, MarketView, Policy, PositionView } from "../src/model.js";
-import { maximumAdditionalShares, orderBudget, rankQuotedPlans, selectCandidates, validateQuote } from "../src/planner.js";
+import { isAssessmentEvidenceValid, maximumAdditionalShares, orderBudget, rankQuotedPlans, selectCandidates, validateQuote } from "../src/planner.js";
 
 const NOW = Date.parse("2026-08-12T12:00:00.000Z");
 const POLICY: Policy = {
@@ -318,5 +318,27 @@ describe("LMSR quote and allocation controls", () => {
     })!;
     expect(smallHighEdge.netEdge).toBeGreaterThan(largeLowerEdge.netEdge);
     expect(rankQuotedPlans([smallHighEdge, largeLowerEdge])[0]).toBe(largeLowerEdge);
+  });
+});
+
+describe("assessment evidence authorization", () => {
+  it("rejects stale or source-less published results before they can authorize writes", () => {
+    const published = {
+      ...ASSESSMENT,
+      evidenceClass: "published_result" as const,
+      probability: 0.99,
+      confidence: "high" as const,
+    };
+    expect(isAssessmentEvidenceValid({ assessment: published, policy: POLICY, now: NOW })).toBe(true);
+    expect(isAssessmentEvidenceValid({
+      assessment: { ...published, sources: [] },
+      policy: POLICY,
+      now: NOW,
+    })).toBe(false);
+    expect(isAssessmentEvidenceValid({
+      assessment: { ...published, observedAt: "2026-08-12T10:00:00.000Z", expiresAt: "2026-08-12T15:00:00.000Z" },
+      policy: POLICY,
+      now: NOW,
+    })).toBe(false);
   });
 });

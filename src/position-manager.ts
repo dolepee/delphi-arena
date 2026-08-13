@@ -9,6 +9,8 @@ import { TradeLedger } from "./ledger.js";
 import type { TradeRecord } from "./ledger.js";
 import type { Assessment, PositionView } from "./model.js";
 import { assertMaintenanceReadiness, readBook } from "./runtime.js";
+import { quoteCandidates } from "./engine.js";
+import { isAssessmentEvidenceValid, selectCandidates } from "./planner.js";
 
 const sharesToRaw = (shares: number) => BigInt(Math.floor(shares * 1e6)) * 10n ** 12n;
 const rawToTokens = (raw: bigint) => Number(raw) / 1e6;
@@ -49,6 +51,7 @@ export function remainingAverageCostPerShare(input: {
   position: PositionView;
   buys: TradeRecord[];
   exits: ExitRecord[];
+  entrySlippagePct: number;
 }): number | null {
   const keyMatches = (record: { marketId: string; outcomeIndex: number }) =>
     record.marketId.toLowerCase() === input.position.marketId.toLowerCase() &&
@@ -56,7 +59,12 @@ export function remainingAverageCostPerShare(input: {
   const lots = input.buys
     .filter((record) => record.status === "CONFIRMED" && keyMatches(record))
     .sort((left, right) => left.createdAt - right.createdAt)
-    .map((record) => ({ shares: record.shares, costPerShare: record.quotedCostTst / record.shares }));
+    .map((record) => ({
+      shares: record.shares,
+      costPerShare: (
+        record.actualCostTst ?? record.maximumCostTst ?? record.quotedCostTst * (1 + input.entrySlippagePct / 100)
+      ) / record.shares,
+    }));
   let sharesExited = input.exits
     .filter((record) => record.status === "CONFIRMED" && keyMatches(record))
     .reduce((total, record) => total + record.shares, 0);
@@ -101,36 +109,16 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
   const buys = await tradeLedger.records();
   const exits = await exitLedger.records();
 
-  const alternatives: Array<{ marketId: string; netEdge: number }> = [];
-  for (const assessment of assessments) {
-    const market = book.markets.find((candidate) => candidate.id.toLowerCase() === assessment.marketId.toLowerCase());
-    if (
-      !market || market.status !== "open" || assessment.status !== "actionable" ||
-      assessment.confidence !== "high" || assessment.evidenceClass !== "published_result" ||
-      now >= Date.parse(assessment.expiresAt) || now >= Date.parse(market.resolvesAt ?? "1970-01-01")
-    ) continue;
-    const opposingPosition = book.positions.some((position) =>
-      position.marketId.toLowerCase() === market.id.toLowerCase() &&
-      position.outcomeIndex !== assessment.outcomeIndex
-    );
-    if (opposingPosition) continue;
-    const spot = market.prices[assessment.outcomeIndex];
-    if (spot === undefined || spot <= 0) continue;
-    const probeShares = Math.max(0.01, Math.floor((policy.minimumFullOrderTst / spot) * 100) / 100);
-    try {
-      const quote = await client.quoteBuy({
-        marketAddress: market.id,
-        outcomeIdx: assessment.outcomeIndex,
-        sharesOut: sharesToRaw(probeShares),
-      });
-      const averagePrice = rawToTokens(quote.tokensIn) / probeShares;
-      const stressedAveragePrice = averagePrice * (1 + policy.slippagePct / 100);
-      const netEdge = assessment.probability - stressedAveragePrice;
-      if (netEdge > 0) alternatives.push({ marketId: market.id, netEdge });
-    } catch {
-      continue;
-    }
-  }
+  const resultCandidates = selectCandidates({ now, policy, markets: book.markets, positions: book.positions, assessments })
+    .filter((candidate) => candidate.assessment.confidence === "high" && candidate.assessment.evidenceClass === "published_result");
+  const { plans: executableAlternatives } = await quoteCandidates({
+    client,
+    candidates: resultCandidates,
+    policy,
+    book,
+    mode: "full",
+  });
+  const alternatives = executableAlternatives.map((plan) => ({ marketId: plan.market.id, netEdge: plan.netEdge }));
 
   for (const position of book.positions) {
     const market = book.markets.find((candidate) => candidate.id.toLowerCase() === position.marketId.toLowerCase());
@@ -138,7 +126,7 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
     const assessment = assessments
       .filter((candidate) => candidate.marketId.toLowerCase() === position.marketId.toLowerCase())
       .sort((left, right) => Date.parse(right.observedAt) - Date.parse(left.observedAt))[0];
-    if (!assessment || assessment.status !== "actionable") continue;
+    if (!assessment || !isAssessmentEvidenceValid({ assessment, policy, now })) continue;
     if (now >= Date.parse(assessment.expiresAt) || now >= Date.parse(market.resolvesAt ?? "1970-01-01")) continue;
 
     const sharesIn = sharesToRaw(position.shares);
@@ -147,7 +135,12 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
     const quotedProceedsTst = rawToTokens(quote.tokensOut);
     const minimumProceedsAtomic = quote.tokensOut * BigInt(Math.floor((100 - (policy.exitSlippagePct ?? policy.slippagePct)) * 100)) / 10_000n;
     const minimumProceedsTst = rawToTokens(minimumProceedsAtomic);
-    const averageCostPerShare = remainingAverageCostPerShare({ position, buys, exits });
+    const averageCostPerShare = remainingAverageCostPerShare({
+      position,
+      buys,
+      exits,
+      entrySlippagePct: policy.slippagePct,
+    });
     const bestAlternative = bestAlternativeForMarket(alternatives, market.id);
     const reason = exitReason({
       position,

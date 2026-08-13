@@ -140,6 +140,7 @@ export async function runTradingCycle(client: DelphiClient, now = Date.now()) {
           outcomeIndex: plan.assessment.outcomeIndex,
           shares: plan.shares,
           quotedCostTst: plan.quotedCostTst,
+          maximumCostTst: plan.maximumCostTst,
           createdAt: now,
         });
         await client.ensureTokenApproval({

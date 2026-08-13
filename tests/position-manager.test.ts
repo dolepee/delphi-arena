@@ -127,7 +127,8 @@ describe("remaining inventory cost basis", () => {
       position: { ...position, shares: 100 },
       buys: [confirmedBuy("a", 100, 70, 1), confirmedBuy("b", 100, 90, 3)],
       exits: [confirmedExit("c", 100, 2)],
-    })).toBeCloseTo(0.9);
+      entrySlippagePct: 2,
+    })).toBeCloseTo(0.918);
   });
 
   it("fails closed when ledger inventory cannot explain the live position", () => {
@@ -135,7 +136,28 @@ describe("remaining inventory cost basis", () => {
       position: { ...position, shares: 100 },
       buys: [confirmedBuy("a", 50, 35, 1)],
       exits: [],
+      entrySlippagePct: 2,
     })).toBeNull();
+  });
+
+  it("uses the persisted maximum authorized entry cost when available", () => {
+    const buy = { ...confirmedBuy("a", 100, 70, 1), maximumCostTst: 72 };
+    expect(remainingAverageCostPerShare({
+      position: { ...position, shares: 100 },
+      buys: [buy],
+      exits: [],
+      entrySlippagePct: 5,
+    })).toBeCloseTo(0.72);
+  });
+
+  it("prefers an independently reconciled actual entry cost", () => {
+    const buy = { ...confirmedBuy("a", 100, 70, 1), maximumCostTst: 72, actualCostTst: 70.5 };
+    expect(remainingAverageCostPerShare({
+      position: { ...position, shares: 100 },
+      buys: [buy],
+      exits: [],
+      entrySlippagePct: 5,
+    })).toBeCloseTo(0.705);
   });
 });
 

@@ -8,6 +8,8 @@ const recordSchema = z.object({
   outcomeIndex: z.number().int().nonnegative(),
   shares: z.number().positive(),
   quotedCostTst: z.number().positive(),
+  maximumCostTst: z.number().positive().optional(),
+  actualCostTst: z.number().positive().optional(),
   status: z.enum(["PREPARED", "CONFIRMED"]),
   createdAt: z.number().int().nonnegative(),
   transactionHash: z.string().optional(),
