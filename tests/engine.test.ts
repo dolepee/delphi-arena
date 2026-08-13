@@ -48,11 +48,23 @@ describe("candidate quote isolation", () => {
 });
 
 describe("pre-write freshness", () => {
-  const plan = { assessment: { expiresAt: "2026-08-13T12:02:00.000Z" } };
+  const plan = { assessment: {
+    observedAt: "2026-08-13T11:32:00.000Z",
+    expiresAt: "2026-08-13T12:02:00.000Z",
+  } };
 
   it("refuses a quoted plan once its evidence or the competition has expired", () => {
-    expect(isPlanExecutableAt(plan, "2026-08-23T23:59:00.000Z", Date.parse("2026-08-13T12:01:59.999Z"))).toBe(true);
-    expect(isPlanExecutableAt(plan, "2026-08-23T23:59:00.000Z", Date.parse("2026-08-13T12:02:00.000Z"))).toBe(false);
-    expect(isPlanExecutableAt(plan, "2026-08-13T12:01:00.000Z", Date.parse("2026-08-13T12:01:00.000Z"))).toBe(false);
+    expect(isPlanExecutableAt(plan, "2026-08-23T23:59:00.000Z", 30, Date.parse("2026-08-13T12:01:59.999Z"))).toBe(true);
+    expect(isPlanExecutableAt(plan, "2026-08-23T23:59:00.000Z", 30, Date.parse("2026-08-13T12:02:00.001Z"))).toBe(false);
+    expect(isPlanExecutableAt(plan, "2026-08-13T12:01:00.000Z", 30, Date.parse("2026-08-13T12:01:00.000Z"))).toBe(false);
+  });
+
+  it("refuses evidence after the configured maximum age even if expiresAt is later", () => {
+    const longExpiry = { assessment: {
+      observedAt: "2026-08-13T11:30:00.000Z",
+      expiresAt: "2026-08-13T14:00:00.000Z",
+    } };
+    expect(isPlanExecutableAt(longExpiry, "2026-08-23T23:59:00.000Z", 30, Date.parse("2026-08-13T12:00:00.000Z"))).toBe(true);
+    expect(isPlanExecutableAt(longExpiry, "2026-08-23T23:59:00.000Z", 30, Date.parse("2026-08-13T12:00:00.001Z"))).toBe(false);
   });
 });

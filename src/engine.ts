@@ -11,11 +11,14 @@ import { sendAlert } from "./alerts.js";
 const sharesToRaw = (shares: number) => BigInt(Math.floor(shares * 1e6)) * 10n ** 12n;
 
 export function isPlanExecutableAt(
-  plan: { assessment: { expiresAt: string } },
+  plan: { assessment: { observedAt: string; expiresAt: string } },
   competitionEndsAt: string,
+  maximumAssessmentAgeMinutes: number,
   now: number,
 ): boolean {
-  return now < Date.parse(plan.assessment.expiresAt) && now < Date.parse(competitionEndsAt);
+  return now < Date.parse(plan.assessment.expiresAt) &&
+    now - Date.parse(plan.assessment.observedAt) <= maximumAssessmentAgeMinutes * 60_000 &&
+    now < Date.parse(competitionEndsAt);
 }
 
 export async function quoteCandidates(input: {
@@ -69,7 +72,7 @@ export async function runTradingCycle(client: DelphiClient, now = Date.now()) {
   const { plans: quotedPlans, quoteFailures } = await quoteCandidates({ client, candidates, policy, book, mode });
   for (const plan of quotedPlans) {
         const executionNow = Date.now();
-        if (!isPlanExecutableAt(plan, policy.competitionEndsAt, executionNow)) continue;
+        if (!isPlanExecutableAt(plan, policy.competitionEndsAt, policy.maximumAssessmentAgeMinutes, executionNow)) continue;
         if (await ledger.get(plan.decisionId)) continue;
         const maximumCost = BigInt(Math.ceil(plan.maximumCostTst * 1e6));
         await ledger.prepare({
@@ -87,7 +90,7 @@ export async function runTradingCycle(client: DelphiClient, now = Date.now()) {
         });
         // Approval can itself wait for a transaction. Since the intent was
         // journaled first, an uncertain approval failure remains fail-closed.
-        if (!isPlanExecutableAt(plan, policy.competitionEndsAt, Date.now())) {
+        if (!isPlanExecutableAt(plan, policy.competitionEndsAt, policy.maximumAssessmentAgeMinutes, Date.now())) {
           await ledger.discardPrepared(plan.decisionId);
           continue;
         }
