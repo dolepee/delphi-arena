@@ -60,8 +60,15 @@ describe("exit ledger", () => {
       reason: "OPPORTUNITY_ROTATION" as const, status: "CONFIRMED" as const, createdAt: 10,
       transactionHash: `0x${"b".repeat(64)}`,
       rotationDestinationMarketId: "0x2222222222222222222222222222222222222222",
+      rotationDestinationExpiresAt: "2026-08-13T20:10:00.000Z",
     }];
-    expect(pendingRotationDestination(exits, [])).toBe(exits[0]!.rotationDestinationMarketId);
-    expect(pendingRotationDestination(exits, [{ status: "CONFIRMED", createdAt: 11 }])).toBeNull();
+    const beforeExpiry = Date.parse("2026-08-13T20:09:59.999Z");
+    expect(pendingRotationDestination(exits, [], beforeExpiry)).toBe(exits[0]!.rotationDestinationMarketId);
+    expect(pendingRotationDestination(exits, [], beforeExpiry + 1)).toBeNull();
+    expect(pendingRotationDestination(
+      exits,
+      [{ status: "CONFIRMED", createdAt: 11 }],
+      beforeExpiry,
+    )).toBeNull();
   });
 });

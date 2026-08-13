@@ -124,7 +124,7 @@ export async function runTradingCycle(client: DelphiClient, now = Date.now()) {
   if (pending) throw new Error(`unresolved trade intent ${pending.decisionId}; automatic writes blocked`);
   const confirmedExits = await exitLedger.records();
   const tradeRecords = await ledger.records();
-  const requiredRotationDestination = pendingRotationDestination(confirmedExits, tradeRecords);
+  const requiredRotationDestination = pendingRotationDestination(confirmedExits, tradeRecords, now);
   const candidates = selectCandidates({ now, policy, markets: book.markets, positions: book.positions, assessments })
     .filter((candidate) => !blocksEntryForAssessment(
       confirmedExits,

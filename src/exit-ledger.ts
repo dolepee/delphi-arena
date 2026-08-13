@@ -15,6 +15,7 @@ const exitRecordSchema = z.object({
   assessmentObservedAt: z.string().datetime().optional(),
   assessmentFingerprint: z.string().length(64).optional(),
   rotationDestinationMarketId: z.string().optional(),
+  rotationDestinationExpiresAt: z.string().datetime().optional(),
   status: z.enum(["PREPARED", "CONFIRMED"]),
   createdAt: z.number().int().nonnegative(),
   transactionHash: z.string().optional(),
@@ -102,6 +103,7 @@ export function blocksEntryForAssessment(
 export function pendingRotationDestination(
   exits: ExitRecord[],
   buys: Array<{ status: "PREPARED" | "CONFIRMED"; createdAt: number }>,
+  now: number,
 ): string | null {
   const rotation = exits
     .filter((record) =>
@@ -111,6 +113,10 @@ export function pendingRotationDestination(
     )
     .sort((left, right) => right.createdAt - left.createdAt)[0];
   if (!rotation?.rotationDestinationMarketId) return null;
+  const expiresAt = rotation.rotationDestinationExpiresAt
+    ? Date.parse(rotation.rotationDestinationExpiresAt)
+    : rotation.createdAt + 10 * 60_000;
+  if (now >= expiresAt) return null;
   const replacementAlreadyBought = buys.some((record) =>
     record.status === "CONFIRMED" && record.createdAt > rotation.createdAt
   );

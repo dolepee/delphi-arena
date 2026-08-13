@@ -310,6 +310,7 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
     if (!freshReason || freshReason !== reason) continue;
 
     let rotationDestinationMarketId: string | undefined;
+    let rotationDestinationExpiresAt: string | undefined;
     if (freshReason === "OPPORTUNITY_ROTATION") {
       if (!freshBestAlternativePlan) continue;
       const destinationMarket = marketToView(await client.getMarket({
@@ -374,6 +375,11 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
         minimumRotationEdgeAdvantage: policy.minimumRotationEdgeAdvantage ?? 0.15,
       }) !== "OPPORTUNITY_ROTATION") continue;
       rotationDestinationMarketId = destinationPlan.market.id;
+      rotationDestinationExpiresAt = new Date(Math.min(
+        Date.parse(destinationPlan.assessment.expiresAt),
+        destinationPlan.market.resolvesAt ? Date.parse(destinationPlan.market.resolvesAt) : Number.POSITIVE_INFINITY,
+        Date.parse(policy.competitionEndsAt),
+      )).toISOString();
     }
     const finalNow = Date.now();
     if (
@@ -396,6 +402,7 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
       assessmentObservedAt: assessment.observedAt,
       assessmentFingerprint: assessmentEvidenceFingerprint(assessment),
       rotationDestinationMarketId,
+      rotationDestinationExpiresAt,
       createdAt: finalNow,
     });
     const result = await client.sellShares({
