@@ -229,9 +229,10 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
     if (await activationMode() !== "full") continue;
 
     const positionGeneration = positionLedgerGeneration({ position, buys });
+    const evidenceFingerprint = assessmentEvidenceFingerprint(assessment);
     const decisionId = createHash("sha256").update(JSON.stringify({
       marketId: market.id.toLowerCase(), outcomeIndex: position.outcomeIndex, shares: position.shares,
-      reason, assessmentObservedAt: assessment.observedAt, positionGeneration,
+      reason, evidenceFingerprint, positionGeneration,
     })).digest("hex");
     if (await exitLedger.get(decisionId)) continue;
     await exitLedger.prepare({
@@ -239,7 +240,7 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
       shares: position.shares, quotedProceedsTst: freshQuotedProceedsTst,
       minimumProceedsTst: freshMinimumProceedsTst, reason,
       assessmentObservedAt: assessment.observedAt,
-      assessmentFingerprint: assessmentEvidenceFingerprint(assessment),
+      assessmentFingerprint: evidenceFingerprint,
       soldOutcomeCooldownUntil: reason === "EVIDENCE_FLIP" ? assessment.expiresAt : undefined,
       createdAt: finalNow,
     });
