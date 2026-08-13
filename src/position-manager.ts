@@ -17,6 +17,10 @@ import { marketToView } from "./delphi.js";
 const sharesToRaw = (shares: number) => BigInt(Math.floor(shares * 1e6)) * 10n ** 12n;
 const rawToTokens = (raw: bigint) => Number(raw) / 1e6;
 
+export function isPastMarketResolution(resolvesAt: string | null | undefined, now: number): boolean {
+  return Boolean(resolvesAt) && now >= Date.parse(resolvesAt!);
+}
+
 export function exitReason(input: {
   position: PositionView;
   assessment: Assessment;
@@ -166,7 +170,7 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
       market.outcomes[assessment.outcomeIndex] === undefined ||
       market.prices[assessment.outcomeIndex] === undefined
     ) continue;
-    if (now >= Date.parse(assessment.expiresAt) || now >= Date.parse(market.resolvesAt ?? "1970-01-01")) continue;
+    if (now >= Date.parse(assessment.expiresAt) || isPastMarketResolution(market.resolvesAt, now)) continue;
 
     const sharesIn = sharesToRaw(position.shares);
     if (sharesIn <= 0n) continue;
@@ -219,7 +223,7 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
     if (
       executionNow >= Date.parse(policy.competitionEndsAt) ||
       !isAssessmentEvidenceValid({ assessment, policy, now: executionNow }) ||
-      executionNow >= Date.parse(market.resolvesAt ?? "1970-01-01")
+      isPastMarketResolution(market.resolvesAt, executionNow)
     ) continue;
     const freshBook = await readBook(client);
     await assertMaintenanceReadiness(freshBook);
@@ -303,7 +307,7 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
       const destinationCheckNow = Date.now();
       if (
         destinationMarket.status !== "open" ||
-        destinationCheckNow >= Date.parse(destinationMarket.resolvesAt ?? "1970-01-01") ||
+        isPastMarketResolution(destinationMarket.resolvesAt, destinationCheckNow) ||
         !isAssessmentEvidenceValid({
           assessment: freshBestAlternativePlan.assessment,
           policy,
@@ -357,7 +361,7 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
     if (
       finalNow >= Date.parse(policy.competitionEndsAt) ||
       !isAssessmentEvidenceValid({ assessment, policy, now: finalNow }) ||
-      finalNow >= Date.parse(freshMarket.resolvesAt ?? "1970-01-01")
+      isPastMarketResolution(freshMarket.resolvesAt, finalNow)
     ) continue;
     if (await activationMode() !== "full") continue;
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Assessment, PositionView } from "../src/model.js";
-import { bestAlternativeForMarket, exitReason, positionLedgerGeneration, postExitBookForRotation, remainingAverageCostPerShare } from "../src/position-manager.js";
+import { bestAlternativeForMarket, exitReason, isPastMarketResolution, positionLedgerGeneration, postExitBookForRotation, remainingAverageCostPerShare } from "../src/position-manager.js";
 
 const position: PositionView = {
   marketId: "0x1111111111111111111111111111111111111111",
@@ -28,6 +28,13 @@ const assessment: Assessment = {
 };
 
 describe("position exit policy", () => {
+  it("treats a missing market deadline as open-ended", () => {
+    const now = Date.parse("2026-08-13T20:00:00.000Z");
+    expect(isPastMarketResolution(null, now)).toBe(false);
+    expect(isPastMarketResolution(undefined, now)).toBe(false);
+    expect(isPastMarketResolution("2026-08-13T19:59:59.999Z", now)).toBe(true);
+  });
+
   it("exits immediately on a high-confidence published-result flip", () => {
     expect(exitReason({
       position,

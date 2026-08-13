@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { client, assertSignerIdentity } from "../delphi.js";
 import { loadAssessments, loadPolicy, stateDirectory } from "../config.js";
 import { TradeLedger } from "../ledger.js";
+import { ExitLedger } from "../exit-ledger.js";
 import { selectCandidates } from "../planner.js";
 import { activationMode, readBook } from "../runtime.js";
 
@@ -18,8 +19,18 @@ checks.push({ name: "gas", ok: book.gasEth >= policy.minimumGasEth, detail: `${b
 checks.push({ name: "funding", ok: book.totalEquityTst >= policy.minimumStartingTst, detail: `${book.totalEquityTst} TST` });
 const candidates = selectCandidates({ now: Date.now(), policy, markets: book.markets, positions: book.positions, assessments });
 checks.push({ name: "evidence", ok: candidates.length > 0, detail: `${candidates.length} actionable candidate(s)` });
-const pending = await new TradeLedger(resolve(stateDirectory(), "trade-ledger.json")).pending();
-checks.push({ name: "ledger", ok: pending === null, detail: pending ? `pending ${pending.decisionId}` : "no unresolved intent" });
+const [pendingTrade, pendingExit] = await Promise.all([
+  new TradeLedger(resolve(stateDirectory(), "trade-ledger.json")).pending(),
+  new ExitLedger(resolve(stateDirectory(), "exit-ledger.json")).pending(),
+]);
+const pending = pendingTrade ?? pendingExit;
+checks.push({
+  name: "ledger",
+  ok: pending === null,
+  detail: pending
+    ? `pending ${pendingExit ? "exit" : "trade"} ${pending.decisionId}`
+    : "no unresolved intent",
+});
 try {
   const mode = await activationMode();
   checks.push({ name: "activation", ok: mode !== "disabled", detail: mode });
