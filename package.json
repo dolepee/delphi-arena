@@ -13,6 +13,7 @@
     "preview": "tsx src/cli/preview.ts",
     "monitor": "tsx src/cli/monitor.ts",
     "cycle": "tsx src/cli/run-cycle.ts",
+    "manage-positions": "tsx src/cli/manage-positions.ts",
     "settle": "tsx src/cli/settle.ts"
   },
   "keywords": [],

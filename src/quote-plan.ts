@@ -12,10 +12,14 @@ export async function findQuotedPlan(input: {
   budgetTst: number;
   mode: "canary" | "full";
   totalEquityTst: number;
+  maximumShares?: number;
 }): Promise<QuotedPlan | null> {
   if (input.budgetTst <= 0) return null;
   let low = 0;
-  let high = cents(input.budgetTst / Math.max(input.candidate.spotPrice, 0.01));
+  let high = cents(Math.min(
+    input.budgetTst / Math.max(input.candidate.spotPrice, 0.01),
+    input.maximumShares ?? Number.POSITIVE_INFINITY,
+  ));
   let best: QuotedPlan | null = null;
   const quoted = new Set<number>();
   for (let attempt = 0; attempt < 22 && high >= 0.01; attempt += 1) {

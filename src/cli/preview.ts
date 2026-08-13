@@ -1,12 +1,21 @@
 import { client, assertSignerIdentity } from "../delphi.js";
-import { loadAssessments, loadPolicy } from "../config.js";
-import { orderBudget, selectCandidates } from "../planner.js";
+import { loadAssessments, loadPolicy, stateDirectory } from "../config.js";
+import { maximumAdditionalShares, orderBudget, selectCandidates } from "../planner.js";
 import { findQuotedPlan } from "../quote-plan.js";
 import { readBook } from "../runtime.js";
+import { resolve } from "node:path";
+import { ExitLedger } from "../exit-ledger.js";
+import { applyExitConstraints } from "../engine.js";
 
 await assertSignerIdentity();
 const [policy, assessments, book] = await Promise.all([loadPolicy(), loadAssessments(), readBook(client)]);
-const candidates = selectCandidates({ now: Date.now(), policy, markets: book.markets, positions: book.positions, assessments });
+const previewNow = Date.now();
+const exits = await new ExitLedger(resolve(stateDirectory(), "exit-ledger.json")).records();
+const candidates = applyExitConstraints({
+  candidates: selectCandidates({ now: previewNow, policy, markets: book.markets, positions: book.positions, assessments }),
+  exits,
+  now: previewNow,
+});
 const previews: unknown[] = [];
 for (const candidate of candidates) {
   for (const mode of ["canary", "full"] as const) {
@@ -28,6 +37,14 @@ for (const candidate of candidates) {
       budgetTst,
       mode,
       totalEquityTst: assumedEquity,
+      maximumShares: maximumAdditionalShares({
+        policy,
+        assessment: candidate.assessment,
+        totalEquityTst: assumedEquity,
+        positions: book.positions,
+        marketId: candidate.market.id,
+        mode,
+      }),
     });
     previews.push(accepted ? {
       mode,

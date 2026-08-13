@@ -3,10 +3,11 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { loadAssessments, loadPolicy, stateDirectory } from "./config.js";
 import { TradeLedger } from "./ledger.js";
-import { isDeterministicPublishedResult, maximumPriceImpact, orderBudget, rankQuotedPlans, selectCandidates } from "./planner.js";
+import { isDeterministicPublishedResult, maximumAdditionalShares, maximumPriceImpact, orderBudget, rankQuotedPlans, selectCandidates } from "./planner.js";
 import { findQuotedPlan } from "./quote-plan.js";
 import { assertWriteReadiness, readBook } from "./runtime.js";
 import { sendAlert } from "./alerts.js";
+import { assessmentEvidenceFingerprint, blocksEntryForAssessment, ExitLedger } from "./exit-ledger.js";
 
 const sharesToRaw = (shares: number) => BigInt(Math.floor(shares * 1e6)) * 10n ** 12n;
 
@@ -92,6 +93,14 @@ export async function quoteCandidates(input: {
         budgetTst,
         mode: input.mode,
         totalEquityTst: input.book.totalEquityTst,
+        maximumShares: maximumAdditionalShares({
+          policy: input.policy,
+          assessment: candidate.assessment,
+          totalEquityTst: input.book.totalEquityTst,
+          positions: input.book.positions ?? [],
+          marketId: candidate.market.id,
+          mode: input.mode,
+        }),
       });
       if (plan) quotedPlans.push(plan);
     } catch (error) {
@@ -101,6 +110,21 @@ export async function quoteCandidates(input: {
   return { plans: rankQuotedPlans(quotedPlans), quoteFailures };
 }
 
+export function applyExitConstraints<T extends ReturnType<typeof selectCandidates>[number]>(input: {
+  candidates: T[];
+  exits: Awaited<ReturnType<ExitLedger["records"]>>;
+  now: number;
+}): T[] {
+  return input.candidates
+    .filter((candidate) => !blocksEntryForAssessment(
+      input.exits,
+      candidate.market.id,
+      candidate.assessment.outcomeIndex,
+      assessmentEvidenceFingerprint(candidate.assessment),
+      input.now,
+    ));
+}
+
 export async function runTradingCycle(client: DelphiClient, now = Date.now()) {
   const [policy, assessments, book] = await Promise.all([
     loadPolicy(),
@@ -108,9 +132,17 @@ export async function runTradingCycle(client: DelphiClient, now = Date.now()) {
     readBook(client),
   ]);
   const ledger = new TradeLedger(resolve(stateDirectory(), "trade-ledger.json"));
+  const exitLedger = new ExitLedger(resolve(stateDirectory(), "exit-ledger.json"));
+  const pendingExit = await exitLedger.pending();
+  if (pendingExit) throw new Error(`unresolved exit intent ${pendingExit.decisionId}; automatic writes blocked`);
   const pending = await ledger.pending();
   if (pending) throw new Error(`unresolved trade intent ${pending.decisionId}; automatic writes blocked`);
-  const candidates = selectCandidates({ now, policy, markets: book.markets, positions: book.positions, assessments });
+  const confirmedExits = await exitLedger.records();
+  const candidates = applyExitConstraints({
+    candidates: selectCandidates({ now, policy, markets: book.markets, positions: book.positions, assessments }),
+    exits: confirmedExits,
+    now,
+  });
   if (candidates.length === 0) return { status: "NO_TRADE" as const, reason: "no fresh evidence-backed edge" };
 
   const mode = await assertWriteReadiness({ now, policy, book });
@@ -128,6 +160,8 @@ export async function runTradingCycle(client: DelphiClient, now = Date.now()) {
           outcomeIndex: plan.assessment.outcomeIndex,
           shares: plan.shares,
           quotedCostTst: plan.quotedCostTst,
+          maximumCostTst: plan.maximumCostTst,
+          assessmentFingerprint: assessmentEvidenceFingerprint(plan.assessment),
           createdAt: now,
         });
         await client.ensureTokenApproval({

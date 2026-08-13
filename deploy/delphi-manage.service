@@ -1,0 +1,17 @@
+[Unit]
+Description=Delphi Arena evidence-backed position manager
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=delphi
+Group=delphi
+WorkingDirectory=/opt/delphi-arena/current
+EnvironmentFile=/etc/delphi-arena/delphi.env
+ExecStart=/usr/bin/flock -w 20 -E 0 /var/lib/delphi-arena/write.lock /usr/bin/npm run manage-positions
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/delphi-arena

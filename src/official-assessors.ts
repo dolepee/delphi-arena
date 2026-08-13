@@ -111,7 +111,9 @@ export async function assessMamdaniExecutiveOrder(input: {
 }
 
 async function extractPdfText(pdfBody: Uint8Array): Promise<string> {
-  const parser = new PDFParse({ data: pdfBody });
+  // pdf.js may transfer/detach the supplied buffer. Parse a copy so the
+  // original bytes remain available for the evidence hash.
+  const parser = new PDFParse({ data: pdfBody.slice() });
   try {
     return (await parser.getText()).text;
   } finally {

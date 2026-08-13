@@ -21,6 +21,23 @@ export function maximumPriceImpact(assessment: Assessment, policy: Policy): numb
     : policy.maximumPriceImpact;
 }
 
+export function isAssessmentEvidenceValid(input: {
+  assessment: Assessment;
+  policy: Policy;
+  now: number;
+}): boolean {
+  const { assessment, policy, now } = input;
+  if (assessment.status !== "actionable" || assessment.confidence === "low") return false;
+  if (assessment.evidenceClass === "published_result" && !isDeterministicPublishedResult(assessment)) return false;
+  const observedAt = Date.parse(assessment.observedAt);
+  if (!Number.isFinite(observedAt) || observedAt > now || now >= Date.parse(assessment.expiresAt)) return false;
+  if (now - observedAt > policy.maximumAssessmentAgeMinutes * 60_000) return false;
+  if (assessment.sources.length < policy.minimumEvidenceSources) return false;
+  if (!assessment.sources.some((source) => source.kind === "authoritative")) return false;
+  if (assessment.sources.some((source) => Date.parse(source.observedAt) > observedAt)) return false;
+  return true;
+}
+
 export function selectCandidates(input: {
   now: number;
   policy: Policy;
@@ -40,14 +57,7 @@ export function selectCandidates(input: {
   }
 
   return input.assessments.flatMap((assessment) => {
-    if (assessment.status !== "actionable" || assessment.confidence === "low") return [];
-    if (assessment.evidenceClass === "published_result" && !isDeterministicPublishedResult(assessment)) return [];
-    const observedAt = Date.parse(assessment.observedAt);
-    if (input.now >= Date.parse(assessment.expiresAt)) return [];
-    if (input.now - observedAt > input.policy.maximumAssessmentAgeMinutes * 60_000) return [];
-    if (assessment.sources.length < input.policy.minimumEvidenceSources) return [];
-    if (!assessment.sources.some((source) => source.kind === "authoritative")) return [];
-    if (assessment.sources.some((source) => Date.parse(source.observedAt) > observedAt)) return [];
+    if (!isAssessmentEvidenceValid({ assessment, policy: input.policy, now: input.now })) return [];
 
     const market = markets.get(assessment.marketId.toLowerCase());
     if (!market || market.status !== "open") return [];
@@ -187,6 +197,34 @@ export function orderBudget(input: {
   const budget = Math.max(0, Math.min(input.availableTst, marketRoom, portfolioRoom, modeCap));
   if (input.mode === "full" && budget < input.policy.minimumFullOrderTst) return 0;
   return budget;
+}
+
+export function maximumAdditionalShares(input: {
+  policy: Policy;
+  assessment: Assessment;
+  totalEquityTst: number;
+  positions: PositionView[];
+  marketId: string;
+  mode: "canary" | "full";
+}): number {
+  const resultLane = input.mode === "full" && isDeterministicPublishedResult(input.assessment);
+  const marketAllocationPct = resultLane
+    ? input.policy.maximumPublishedResultMarketAllocationPct
+    : input.policy.maximumMarketAllocationPct;
+  const portfolioAllocationPct = resultLane
+    ? input.policy.maximumPublishedResultPortfolioAllocationPct
+    : input.policy.maximumPortfolioAllocationPct;
+  const sameOutcomeShares = input.positions
+    .filter((position) =>
+      position.marketId.toLowerCase() === input.marketId.toLowerCase() &&
+      position.outcomeIndex === input.assessment.outcomeIndex
+    )
+    .reduce((total, position) => total + position.shares, 0);
+  const portfolioShares = input.positions.reduce((total, position) => total + position.shares, 0);
+  return Math.max(0, Math.min(
+    input.totalEquityTst * marketAllocationPct / 100 - sameOutcomeShares,
+    input.totalEquityTst * portfolioAllocationPct / 100 - portfolioShares,
+  ));
 }
 
 export function rankQuotedPlans(plans: QuotedPlan[]): QuotedPlan[] {
