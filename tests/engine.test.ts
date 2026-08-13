@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Candidate, Policy } from "../src/model.js";
-import { isPlanExecutableAt, quoteCandidates } from "../src/engine.js";
+import { isPlanExecutableAt, isPlanWithinBookLimits, quoteCandidates } from "../src/engine.js";
 
 const policy: Policy = {
   competitionEndsAt: "2026-08-23T23:59:00.000Z", minimumStartingTst: 1000, minimumGasEth: 0.001,
@@ -86,5 +86,45 @@ describe("pre-write freshness", () => {
     };
     expect(isPlanExecutableAt(closing, "2026-08-23T23:59:00.000Z", 30, Date.parse("2026-08-13T11:59:59.999Z"))).toBe(true);
     expect(isPlanExecutableAt(closing, "2026-08-23T23:59:00.000Z", 30, Date.parse("2026-08-13T12:00:00.000Z"))).toBe(false);
+  });
+});
+
+describe("fresh-book allocation", () => {
+  const published = {
+    ...candidate("d", 0.99, 0.7),
+    assessment: {
+      ...candidate("d", 0.99, 0.7).assessment,
+      evidenceClass: "published_result" as const,
+      probability: 0.99,
+    },
+  };
+  const plan = {
+    ...published,
+    shares: 50,
+    quotedCostTst: 35,
+    maximumCostTst: 35.7,
+    averagePrice: 0.7,
+    maximumAveragePrice: 0.714,
+    netEdge: 0.276,
+    priceImpact: 0.014,
+    worstCaseExpectedProfitTst: 13.8,
+    mode: "full" as const,
+    decisionId: "e".repeat(64),
+  };
+  const book = {
+    rawMarkets: [],
+    rawPositions: [],
+    markets: [],
+    totalEquityTst: 1000,
+    availableTst: 100,
+    deployedValueTst: 560,
+    gasEth: 1,
+    positions: [{ marketId: published.market.id, outcomeIndex: 0, shares: 800, markPrice: 0.7 }],
+  };
+
+  it("rechecks cash and face-value exposure against the latest book", () => {
+    expect(isPlanWithinBookLimits({ plan, policy, book })).toBe(true);
+    expect(isPlanWithinBookLimits({ plan, policy, book: { ...book, totalEquityTst: 999 } })).toBe(false);
+    expect(isPlanWithinBookLimits({ plan, policy, book: { ...book, availableTst: 35 } })).toBe(false);
   });
 });

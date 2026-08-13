@@ -3,7 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { loadAssessments, loadPolicy, stateDirectory } from "./config.js";
 import { TradeLedger } from "./ledger.js";
-import { orderBudget, rankQuotedPlans, selectCandidates } from "./planner.js";
+import { isDeterministicPublishedResult, orderBudget, rankQuotedPlans, selectCandidates } from "./planner.js";
 import { findQuotedPlan } from "./quote-plan.js";
 import { assertWriteReadiness, readBook } from "./runtime.js";
 import { sendAlert } from "./alerts.js";
@@ -23,6 +23,39 @@ export function isPlanExecutableAt(
     now - Date.parse(plan.assessment.observedAt) <= maximumAssessmentAgeMinutes * 60_000 &&
     (!plan.market.resolvesAt || now < Date.parse(plan.market.resolvesAt)) &&
     now < Date.parse(competitionEndsAt);
+}
+
+export function isPlanWithinBookLimits(input: {
+  plan: ReturnType<typeof rankQuotedPlans>[number];
+  policy: Awaited<ReturnType<typeof loadPolicy>>;
+  book: Awaited<ReturnType<typeof readBook>>;
+}): boolean {
+  const resultLane = input.plan.mode === "full" &&
+    isDeterministicPublishedResult(input.plan.assessment);
+  const marketPct = resultLane
+    ? input.policy.maximumPublishedResultMarketAllocationPct
+    : input.policy.maximumMarketAllocationPct;
+  const portfolioPct = resultLane
+    ? input.policy.maximumPublishedResultPortfolioAllocationPct
+    : input.policy.maximumPortfolioAllocationPct;
+  const sameOutcomeShares = input.book.positions
+    .filter((position) =>
+      position.marketId.toLowerCase() === input.plan.market.id.toLowerCase() &&
+      position.outcomeIndex === input.plan.assessment.outcomeIndex
+    )
+    .reduce((total, position) => total + position.shares, 0);
+  const opposingPosition = input.book.positions.some((position) =>
+    position.marketId.toLowerCase() === input.plan.market.id.toLowerCase() &&
+    position.outcomeIndex !== input.plan.assessment.outcomeIndex
+  );
+  const portfolioShares = input.book.positions.reduce(
+    (total, position) => total + position.shares,
+    0,
+  );
+  return !opposingPosition &&
+    input.plan.maximumCostTst <= input.book.availableTst &&
+    sameOutcomeShares + input.plan.shares <= input.book.totalEquityTst * marketPct / 100 &&
+    portfolioShares + input.plan.shares <= input.book.totalEquityTst * portfolioPct / 100;
 }
 
 export async function quoteCandidates(input: {
@@ -79,6 +112,8 @@ export async function runTradingCycle(client: DelphiClient, now = Date.now()) {
         const executionNow = Date.now();
         if (!isPlanExecutableAt(plan, policy.competitionEndsAt, policy.maximumAssessmentAgeMinutes, executionNow)) continue;
         if (await ledger.get(plan.decisionId)) continue;
+        const freshBook = await readBook(client);
+        if (!isPlanWithinBookLimits({ plan, policy, book: freshBook })) continue;
         const maximumCost = BigInt(Math.ceil(plan.maximumCostTst * 1e6));
         await ledger.prepare({
           decisionId: plan.decisionId,
@@ -93,6 +128,11 @@ export async function runTradingCycle(client: DelphiClient, now = Date.now()) {
           minimumAmount: maximumCost,
           approveAmount: maximumCost,
         });
+        const postApprovalBook = await readBook(client);
+        if (!isPlanWithinBookLimits({ plan, policy, book: postApprovalBook })) {
+          await ledger.discardPrepared(plan.decisionId);
+          continue;
+        }
         // Approval can itself wait for a transaction. Since the intent was
         // journaled first, an uncertain approval failure remains fail-closed.
         if (!isPlanExecutableAt(plan, policy.competitionEndsAt, policy.maximumAssessmentAgeMinutes, Date.now())) {
