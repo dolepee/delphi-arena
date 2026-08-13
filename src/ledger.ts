@@ -65,4 +65,15 @@ export class TradeLedger {
     record.transactionHash = transactionHash;
     await this.write(state);
   }
+
+  async discardPrepared(decisionId: string): Promise<void> {
+    const state = await this.read();
+    const record = state.records.find((item) => item.decisionId === decisionId);
+    if (!record) return;
+    if (record.status !== "PREPARED") {
+      throw new Error("only an unsubmitted trade intent can be discarded");
+    }
+    state.records = state.records.filter((item) => item.decisionId !== decisionId);
+    await this.write(state);
+  }
 }

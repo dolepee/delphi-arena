@@ -71,6 +71,15 @@ export async function runTradingCycle(client: DelphiClient, now = Date.now()) {
         const executionNow = Date.now();
         if (!isPlanExecutableAt(plan, policy.competitionEndsAt, executionNow)) continue;
         if (await ledger.get(plan.decisionId)) continue;
+        const maximumCost = BigInt(Math.ceil(plan.maximumCostTst * 1e6));
+        await client.ensureTokenApproval({
+          marketAddress: plan.market.id,
+          minimumAmount: maximumCost,
+          approveAmount: maximumCost,
+        });
+        // Approval can itself wait for a transaction. Do not persist an intent or
+        // submit a buy unless the evidence and competition window still survive it.
+        if (!isPlanExecutableAt(plan, policy.competitionEndsAt, Date.now())) continue;
         await ledger.prepare({
           decisionId: plan.decisionId,
           marketId: plan.market.id,
@@ -79,12 +88,10 @@ export async function runTradingCycle(client: DelphiClient, now = Date.now()) {
           quotedCostTst: plan.quotedCostTst,
           createdAt: now,
         });
-        const maximumCost = BigInt(Math.ceil(plan.maximumCostTst * 1e6));
-        await client.ensureTokenApproval({
-          marketAddress: plan.market.id,
-          minimumAmount: maximumCost,
-          approveAmount: maximumCost,
-        });
+        if (!isPlanExecutableAt(plan, policy.competitionEndsAt, Date.now())) {
+          await ledger.discardPrepared(plan.decisionId);
+          continue;
+        }
         const result = await client.buyShares({
           marketAddress: plan.market.id,
           outcomeIdx: plan.assessment.outcomeIndex,
