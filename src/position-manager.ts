@@ -243,6 +243,35 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
       BigInt(Math.floor((100 - (policy.exitSlippagePct ?? policy.slippagePct)) * 100)) /
       10_000n;
     const freshMinimumProceedsTst = rawToTokens(freshMinimumProceedsAtomic);
+    const freshPostExitBook = postExitBookForRotation(
+      freshBook,
+      freshPosition,
+      freshMinimumProceedsTst,
+    );
+    const freshCandidates = selectCandidates({
+      now: Date.now(),
+      policy,
+      markets: freshPostExitBook.markets,
+      positions: freshPostExitBook.positions,
+      assessments,
+    }).filter((candidate) =>
+      candidate.assessment.confidence === "high" &&
+      candidate.assessment.evidenceClass === "published_result"
+    );
+    const { plans: freshExecutableAlternatives } = await quoteCandidates({
+      client,
+      candidates: freshCandidates,
+      policy,
+      book: freshPostExitBook,
+      mode: "full",
+    });
+    const freshBestAlternative = bestAlternativeForMarket(
+      freshExecutableAlternatives.map((plan) => ({
+        marketId: plan.market.id,
+        netEdge: plan.netEdge,
+      })),
+      freshMarket.id,
+    );
     const freshReason = exitReason({
       position: freshPosition,
       assessment,
@@ -250,10 +279,17 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
       averageCostPerShare,
       minimumProfitTakeReturnPct: policy.minimumProfitTakeReturnPct ?? 3,
       maximumHoldEdgeForProfitTake: policy.maximumHoldEdgeForProfitTake ?? 0.02,
-      bestAlternativeNetEdge: bestAlternative?.netEdge ?? null,
+      bestAlternativeNetEdge: freshBestAlternative?.netEdge ?? null,
       minimumRotationEdgeAdvantage: policy.minimumRotationEdgeAdvantage ?? 0.15,
     });
     if (!freshReason || freshReason !== reason) continue;
+
+    const finalNow = Date.now();
+    if (
+      finalNow >= Date.parse(policy.competitionEndsAt) ||
+      !isAssessmentEvidenceValid({ assessment, policy, now: finalNow }) ||
+      finalNow >= Date.parse(freshMarket.resolvesAt ?? "1970-01-01")
+    ) continue;
 
     const positionGeneration = positionLedgerGeneration({ position, buys, exits });
     const decisionId = createHash("sha256").update(JSON.stringify({
@@ -264,7 +300,7 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
     await exitLedger.prepare({
       decisionId, marketId: market.id, outcomeIndex: position.outcomeIndex,
       shares: position.shares, quotedProceedsTst: freshQuotedProceedsTst,
-      minimumProceedsTst: freshMinimumProceedsTst, reason, createdAt: executionNow,
+      minimumProceedsTst: freshMinimumProceedsTst, reason, createdAt: finalNow,
     });
     const result = await client.sellShares({
       marketAddress: market.id,
