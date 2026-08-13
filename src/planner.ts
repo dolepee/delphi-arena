@@ -30,7 +30,7 @@ export function isAssessmentEvidenceValid(input: {
   if (assessment.status !== "actionable" || assessment.confidence === "low") return false;
   if (assessment.evidenceClass === "published_result" && !isDeterministicPublishedResult(assessment)) return false;
   const observedAt = Date.parse(assessment.observedAt);
-  if (!Number.isFinite(observedAt) || now >= Date.parse(assessment.expiresAt)) return false;
+  if (!Number.isFinite(observedAt) || observedAt > now || now >= Date.parse(assessment.expiresAt)) return false;
   if (now - observedAt > policy.maximumAssessmentAgeMinutes * 60_000) return false;
   if (assessment.sources.length < policy.minimumEvidenceSources) return false;
   if (!assessment.sources.some((source) => source.kind === "authoritative")) return false;

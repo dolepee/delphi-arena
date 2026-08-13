@@ -89,6 +89,24 @@ export function remainingAverageCostPerShare(input: {
   return input.position.shares > 0 && sharesNeeded <= 1e-6 ? cost / input.position.shares : null;
 }
 
+export function positionLedgerGeneration(input: {
+  position: PositionView;
+  buys: TradeRecord[];
+  exits: ExitRecord[];
+}): string {
+  const keyMatches = (record: { marketId: string; outcomeIndex: number }) =>
+    record.marketId.toLowerCase() === input.position.marketId.toLowerCase() &&
+    record.outcomeIndex === input.position.outcomeIndex;
+  return createHash("sha256").update(JSON.stringify({
+    buys: input.buys.filter(keyMatches).map((record) => [
+      record.decisionId, record.status, record.transactionHash ?? null, record.shares,
+    ]),
+    exits: input.exits.filter(keyMatches).map((record) => [
+      record.decisionId, record.status, record.transactionHash ?? null, record.shares,
+    ]),
+  })).digest("hex");
+}
+
 export function bestAlternativeForMarket(
   alternatives: Array<{ marketId: string; netEdge: number }>,
   currentMarketId: string,
@@ -140,6 +158,10 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
       .filter((candidate) => candidate.marketId.toLowerCase() === position.marketId.toLowerCase())
       .sort((left, right) => Date.parse(right.observedAt) - Date.parse(left.observedAt))[0];
     if (!assessment || !isAssessmentEvidenceValid({ assessment, policy, now })) continue;
+    if (
+      market.outcomes[assessment.outcomeIndex] === undefined ||
+      market.prices[assessment.outcomeIndex] === undefined
+    ) continue;
     if (now >= Date.parse(assessment.expiresAt) || now >= Date.parse(market.resolvesAt ?? "1970-01-01")) continue;
 
     const sharesIn = sharesToRaw(position.shares);
@@ -189,9 +211,32 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
     });
     if (!reason) continue;
 
+    const executionNow = Date.now();
+    if (
+      executionNow >= Date.parse(policy.competitionEndsAt) ||
+      !isAssessmentEvidenceValid({ assessment, policy, now: executionNow }) ||
+      executionNow >= Date.parse(market.resolvesAt ?? "1970-01-01")
+    ) continue;
+    const freshBook = await readBook(client);
+    await assertMaintenanceReadiness(freshBook);
+    const freshMarket = freshBook.markets.find((candidate) =>
+      candidate.id.toLowerCase() === market.id.toLowerCase()
+    );
+    const freshPosition = freshBook.positions.find((candidate) =>
+      candidate.marketId.toLowerCase() === position.marketId.toLowerCase() &&
+      candidate.outcomeIndex === position.outcomeIndex
+    );
+    if (
+      !freshMarket || freshMarket.status !== "open" ||
+      freshMarket.outcomes[assessment.outcomeIndex] === undefined ||
+      freshMarket.prices[assessment.outcomeIndex] === undefined ||
+      !freshPosition || Math.abs(freshPosition.shares - position.shares) > 1e-6
+    ) continue;
+
+    const positionGeneration = positionLedgerGeneration({ position, buys, exits });
     const decisionId = createHash("sha256").update(JSON.stringify({
       marketId: market.id.toLowerCase(), outcomeIndex: position.outcomeIndex, shares: position.shares,
-      reason, assessmentObservedAt: assessment.observedAt,
+      reason, assessmentObservedAt: assessment.observedAt, positionGeneration,
     })).digest("hex");
     if (await exitLedger.get(decisionId)) continue;
     await exitLedger.prepare({

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Assessment, PositionView } from "../src/model.js";
-import { bestAlternativeForMarket, exitReason, postExitBookForRotation, remainingAverageCostPerShare } from "../src/position-manager.js";
+import { bestAlternativeForMarket, exitReason, positionLedgerGeneration, postExitBookForRotation, remainingAverageCostPerShare } from "../src/position-manager.js";
 
 const position: PositionView = {
   marketId: "0x1111111111111111111111111111111111111111",
@@ -158,6 +158,18 @@ describe("remaining inventory cost basis", () => {
       exits: [],
       entrySlippagePct: 5,
     })).toBeCloseTo(0.705);
+  });
+
+  it("changes the position generation when a sold outcome is reopened", () => {
+    const firstBuy = confirmedBuy("a", 100, 70, 1);
+    const firstExit = confirmedExit("b", 100, 2);
+    const first = positionLedgerGeneration({ position, buys: [firstBuy], exits: [] });
+    const reopened = positionLedgerGeneration({
+      position,
+      buys: [firstBuy, confirmedBuy("c", 100, 90, 3)],
+      exits: [firstExit],
+    });
+    expect(reopened).not.toBe(first);
   });
 });
 

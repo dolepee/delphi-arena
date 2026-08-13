@@ -340,5 +340,10 @@ describe("assessment evidence authorization", () => {
       policy: POLICY,
       now: NOW,
     })).toBe(false);
+    expect(isAssessmentEvidenceValid({
+      assessment: { ...published, observedAt: "2026-08-12T12:01:00.000Z" },
+      policy: POLICY,
+      now: NOW,
+    })).toBe(false);
   });
 });
