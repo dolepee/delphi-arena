@@ -3,7 +3,7 @@ import type { DelphiClient } from "@gensyn-ai/gensyn-delphi-sdk";
 import { resolve } from "node:path";
 import { sendAlert } from "./alerts.js";
 import { loadAssessments, loadPolicy, stateDirectory } from "./config.js";
-import { ExitLedger } from "./exit-ledger.js";
+import { assessmentEvidenceFingerprint, ExitLedger } from "./exit-ledger.js";
 import type { ExitRecord } from "./exit-ledger.js";
 import { TradeLedger } from "./ledger.js";
 import type { TradeRecord } from "./ledger.js";
@@ -293,12 +293,7 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
     });
     if (!freshReason || freshReason !== reason) continue;
 
-    const finalNow = Date.now();
-    if (
-      finalNow >= Date.parse(policy.competitionEndsAt) ||
-      !isAssessmentEvidenceValid({ assessment, policy, now: finalNow }) ||
-      finalNow >= Date.parse(freshMarket.resolvesAt ?? "1970-01-01")
-    ) continue;
+    let rotationDestinationMarketId: string | undefined;
     if (freshReason === "OPPORTUNITY_ROTATION") {
       if (!freshBestAlternativePlan) continue;
       const destinationMarket = marketToView(await client.getMarket({
@@ -317,7 +312,53 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
         destinationMarket.outcomes[freshBestAlternativePlan.assessment.outcomeIndex] === undefined ||
         destinationMarket.prices[freshBestAlternativePlan.assessment.outcomeIndex] === undefined
       ) continue;
+      const destinationBook: Book = {
+        ...freshPostExitBook,
+        markets: freshPostExitBook.markets.map((candidate) =>
+          candidate.id.toLowerCase() === destinationMarket.id.toLowerCase()
+            ? destinationMarket
+            : candidate
+        ),
+      };
+      const destinationCandidates = selectCandidates({
+        now: destinationCheckNow,
+        policy,
+        markets: destinationBook.markets,
+        positions: destinationBook.positions,
+        assessments,
+      }).filter((candidate) =>
+        candidate.market.id.toLowerCase() === destinationMarket.id.toLowerCase() &&
+        candidate.assessment.confidence === "high" &&
+        candidate.assessment.evidenceClass === "published_result"
+      );
+      const { plans: destinationPlans } = await quoteCandidates({
+        client,
+        candidates: destinationCandidates,
+        policy,
+        book: destinationBook,
+        mode: "full",
+      });
+      const destinationPlan = destinationPlans.find((plan) =>
+        plan.market.id.toLowerCase() === destinationMarket.id.toLowerCase()
+      );
+      if (!destinationPlan || exitReason({
+        position: freshPosition,
+        assessment,
+        minimumProceedsTst: freshMinimumProceedsTst,
+        averageCostPerShare,
+        minimumProfitTakeReturnPct: policy.minimumProfitTakeReturnPct ?? 3,
+        maximumHoldEdgeForProfitTake: policy.maximumHoldEdgeForProfitTake ?? 0.02,
+        bestAlternativeNetEdge: destinationPlan.netEdge,
+        minimumRotationEdgeAdvantage: policy.minimumRotationEdgeAdvantage ?? 0.15,
+      }) !== "OPPORTUNITY_ROTATION") continue;
+      rotationDestinationMarketId = destinationPlan.market.id;
     }
+    const finalNow = Date.now();
+    if (
+      finalNow >= Date.parse(policy.competitionEndsAt) ||
+      !isAssessmentEvidenceValid({ assessment, policy, now: finalNow }) ||
+      finalNow >= Date.parse(freshMarket.resolvesAt ?? "1970-01-01")
+    ) continue;
     if (await activationMode() !== "full") continue;
 
     const positionGeneration = positionLedgerGeneration({ position, buys, exits });
@@ -329,7 +370,11 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
     await exitLedger.prepare({
       decisionId, marketId: market.id, outcomeIndex: position.outcomeIndex,
       shares: position.shares, quotedProceedsTst: freshQuotedProceedsTst,
-      minimumProceedsTst: freshMinimumProceedsTst, reason, createdAt: finalNow,
+      minimumProceedsTst: freshMinimumProceedsTst, reason,
+      assessmentObservedAt: assessment.observedAt,
+      assessmentFingerprint: assessmentEvidenceFingerprint(assessment),
+      rotationDestinationMarketId,
+      createdAt: finalNow,
     });
     const result = await client.sellShares({
       marketAddress: market.id,
@@ -338,7 +383,7 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
       minTokensOut: freshMinimumProceedsAtomic,
     });
     await exitLedger.confirm(decisionId, result.transactionHash);
-    await sendAlert("POSITION EXITED", `${reason}\n${market.question}\n${market.outcomes[position.outcomeIndex]} | ${position.shares} shares | quoted ${quotedProceedsTst.toFixed(4)} TST\n${result.transactionHash}`);
+    await sendAlert("POSITION EXITED", `${reason}\n${market.question}\n${market.outcomes[position.outcomeIndex]} | ${position.shares} shares | quoted ${freshQuotedProceedsTst.toFixed(4)} TST\n${result.transactionHash}`);
     return { status: "SOLD" as const, reason, transactionHash: result.transactionHash };
   }
   return { status: "NO_EXIT" as const, reason: "no fresh evidence flip or converged profitable position" };

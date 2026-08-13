@@ -7,7 +7,7 @@ import { isDeterministicPublishedResult, maximumAdditionalShares, maximumPriceIm
 import { findQuotedPlan } from "./quote-plan.js";
 import { assertWriteReadiness, readBook } from "./runtime.js";
 import { sendAlert } from "./alerts.js";
-import { ExitLedger } from "./exit-ledger.js";
+import { assessmentEvidenceFingerprint, blocksEntryForAssessment, ExitLedger } from "./exit-ledger.js";
 
 const sharesToRaw = (shares: number) => BigInt(Math.floor(shares * 1e6)) * 10n ** 12n;
 
@@ -122,7 +122,13 @@ export async function runTradingCycle(client: DelphiClient, now = Date.now()) {
   if (pendingExit) throw new Error(`unresolved exit intent ${pendingExit.decisionId}; automatic writes blocked`);
   const pending = await ledger.pending();
   if (pending) throw new Error(`unresolved trade intent ${pending.decisionId}; automatic writes blocked`);
-  const candidates = selectCandidates({ now, policy, markets: book.markets, positions: book.positions, assessments });
+  const confirmedExits = await exitLedger.records();
+  const candidates = selectCandidates({ now, policy, markets: book.markets, positions: book.positions, assessments })
+    .filter((candidate) => !blocksEntryForAssessment(
+      confirmedExits,
+      candidate.market.id,
+      assessmentEvidenceFingerprint(candidate.assessment),
+    ));
   if (candidates.length === 0) return { status: "NO_TRADE" as const, reason: "no fresh evidence-backed edge" };
 
   const mode = await assertWriteReadiness({ now, policy, book });

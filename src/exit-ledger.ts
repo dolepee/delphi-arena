@@ -1,6 +1,8 @@
+import { createHash } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { z } from "zod";
+import type { Assessment } from "./model.js";
 
 const exitRecordSchema = z.object({
   decisionId: z.string().length(64),
@@ -10,6 +12,9 @@ const exitRecordSchema = z.object({
   quotedProceedsTst: z.number().nonnegative(),
   minimumProceedsTst: z.number().nonnegative(),
   reason: z.enum(["EVIDENCE_FLIP", "PROFIT_TAKE", "OPPORTUNITY_ROTATION"]),
+  assessmentObservedAt: z.string().datetime().optional(),
+  assessmentFingerprint: z.string().length(64).optional(),
+  rotationDestinationMarketId: z.string().optional(),
   status: z.enum(["PREPARED", "CONFIRMED"]),
   createdAt: z.number().int().nonnegative(),
   transactionHash: z.string().optional(),
@@ -67,4 +72,27 @@ export class ExitLedger {
     record.transactionHash = transactionHash;
     await this.write(state);
   }
+}
+
+export function assessmentEvidenceFingerprint(
+  assessment: Pick<Assessment, "marketId" | "outcomeIndex" | "evidenceClass" | "sources">,
+): string {
+  return createHash("sha256").update(JSON.stringify({
+    marketId: assessment.marketId.toLowerCase(),
+    outcomeIndex: assessment.outcomeIndex,
+    evidenceClass: assessment.evidenceClass,
+    sources: assessment.sources.map((source) => [source.url, source.kind, source.valueHash]),
+  })).digest("hex");
+}
+
+export function blocksEntryForAssessment(
+  exits: ExitRecord[],
+  marketId: string,
+  assessmentFingerprint: string,
+): boolean {
+  return exits.some((record) =>
+    record.status === "CONFIRMED" &&
+    record.marketId.toLowerCase() === marketId.toLowerCase() &&
+    record.assessmentFingerprint === assessmentFingerprint
+  );
 }
