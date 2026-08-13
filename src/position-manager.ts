@@ -4,7 +4,9 @@ import { resolve } from "node:path";
 import { sendAlert } from "./alerts.js";
 import { loadAssessments, loadPolicy, stateDirectory } from "./config.js";
 import { ExitLedger } from "./exit-ledger.js";
+import type { ExitRecord } from "./exit-ledger.js";
 import { TradeLedger } from "./ledger.js";
+import type { TradeRecord } from "./ledger.js";
 import type { Assessment, PositionView } from "./model.js";
 import { assertMaintenanceReadiness, readBook } from "./runtime.js";
 
@@ -14,7 +16,7 @@ const rawToTokens = (raw: bigint) => Number(raw) / 1e6;
 export function exitReason(input: {
   position: PositionView;
   assessment: Assessment;
-  quotedProceedsTst: number;
+  minimumProceedsTst: number;
   averageCostPerShare: number | null;
   minimumProfitTakeReturnPct: number;
   maximumHoldEdgeForProfitTake: number;
@@ -29,7 +31,7 @@ export function exitReason(input: {
   ) return "EVIDENCE_FLIP";
 
   if (input.assessment.outcomeIndex !== input.position.outcomeIndex || input.averageCostPerShare === null) return null;
-  const averageExitPrice = input.quotedProceedsTst / input.position.shares;
+  const averageExitPrice = input.minimumProceedsTst / input.position.shares;
   const returnPct = (averageExitPrice / input.averageCostPerShare - 1) * 100;
   const holdEdge = input.assessment.probability - averageExitPrice;
   if (
@@ -43,6 +45,50 @@ export function exitReason(input: {
     : null;
 }
 
+export function remainingAverageCostPerShare(input: {
+  position: PositionView;
+  buys: TradeRecord[];
+  exits: ExitRecord[];
+}): number | null {
+  const keyMatches = (record: { marketId: string; outcomeIndex: number }) =>
+    record.marketId.toLowerCase() === input.position.marketId.toLowerCase() &&
+    record.outcomeIndex === input.position.outcomeIndex;
+  const lots = input.buys
+    .filter((record) => record.status === "CONFIRMED" && keyMatches(record))
+    .sort((left, right) => left.createdAt - right.createdAt)
+    .map((record) => ({ shares: record.shares, costPerShare: record.quotedCostTst / record.shares }));
+  let sharesExited = input.exits
+    .filter((record) => record.status === "CONFIRMED" && keyMatches(record))
+    .reduce((total, record) => total + record.shares, 0);
+  for (const lot of lots) {
+    const consumed = Math.min(lot.shares, sharesExited);
+    lot.shares -= consumed;
+    sharesExited -= consumed;
+  }
+  if (sharesExited > 1e-6) return null;
+  const remaining = lots.filter((lot) => lot.shares > 1e-6);
+  const recordedShares = remaining.reduce((total, lot) => total + lot.shares, 0);
+  if (Math.abs(recordedShares - input.position.shares) > 1e-4) return null;
+  let sharesNeeded = input.position.shares;
+  let cost = 0;
+  for (const lot of remaining) {
+    const included = Math.min(lot.shares, sharesNeeded);
+    cost += included * lot.costPerShare;
+    sharesNeeded -= included;
+    if (sharesNeeded <= 1e-6) break;
+  }
+  return input.position.shares > 0 && sharesNeeded <= 1e-6 ? cost / input.position.shares : null;
+}
+
+export function bestAlternativeForMarket(
+  alternatives: Array<{ marketId: string; netEdge: number }>,
+  currentMarketId: string,
+): { marketId: string; netEdge: number } | null {
+  return alternatives
+    .filter((candidate) => candidate.marketId.toLowerCase() !== currentMarketId.toLowerCase())
+    .sort((left, right) => right.netEdge - left.netEdge)[0] ?? null;
+}
+
 export async function runPositionManagementCycle(client: DelphiClient, now = Date.now()) {
   const [policy, assessments, book] = await Promise.all([loadPolicy(), loadAssessments(), readBook(client)]);
   await assertMaintenanceReadiness(book);
@@ -52,9 +98,10 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
   if (pending) throw new Error(`unresolved exit intent ${pending.decisionId}; automatic writes blocked`);
   const buyPending = await tradeLedger.pending();
   if (buyPending) throw new Error(`unresolved trade intent ${buyPending.decisionId}; automatic exits blocked`);
-  const buys = (await tradeLedger.records()).filter((record) => record.status === "CONFIRMED");
+  const buys = await tradeLedger.records();
+  const exits = await exitLedger.records();
 
-  let bestAlternative: { marketId: string; netEdge: number } | null = null;
+  const alternatives: Array<{ marketId: string; netEdge: number }> = [];
   for (const assessment of assessments) {
     const market = book.markets.find((candidate) => candidate.id.toLowerCase() === assessment.marketId.toLowerCase());
     if (
@@ -79,7 +126,7 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
       const averagePrice = rawToTokens(quote.tokensIn) / probeShares;
       const stressedAveragePrice = averagePrice * (1 + policy.slippagePct / 100);
       const netEdge = assessment.probability - stressedAveragePrice;
-      if (netEdge > (bestAlternative?.netEdge ?? 0)) bestAlternative = { marketId: market.id, netEdge };
+      if (netEdge > 0) alternatives.push({ marketId: market.id, netEdge });
     } catch {
       continue;
     }
@@ -98,30 +145,22 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
     if (sharesIn <= 0n) continue;
     const quote = await client.quoteSell({ marketAddress: market.id, outcomeIdx: position.outcomeIndex, sharesIn });
     const quotedProceedsTst = rawToTokens(quote.tokensOut);
-    const matchingBuys = buys.filter((record) =>
-      record.marketId.toLowerCase() === position.marketId.toLowerCase() &&
-      record.outcomeIndex === position.outcomeIndex
-    );
-    const boughtShares = matchingBuys.reduce((total, record) => total + record.shares, 0);
-    const averageCostPerShare = boughtShares > 0
-      ? matchingBuys.reduce((total, record) => total + record.quotedCostTst, 0) / boughtShares
-      : null;
+    const minimumProceedsAtomic = quote.tokensOut * BigInt(Math.floor((100 - (policy.exitSlippagePct ?? policy.slippagePct)) * 100)) / 10_000n;
+    const minimumProceedsTst = rawToTokens(minimumProceedsAtomic);
+    const averageCostPerShare = remainingAverageCostPerShare({ position, buys, exits });
+    const bestAlternative = bestAlternativeForMarket(alternatives, market.id);
     const reason = exitReason({
       position,
       assessment,
-      quotedProceedsTst,
+      minimumProceedsTst,
       averageCostPerShare,
       minimumProfitTakeReturnPct: policy.minimumProfitTakeReturnPct ?? 3,
       maximumHoldEdgeForProfitTake: policy.maximumHoldEdgeForProfitTake ?? 0.02,
-      bestAlternativeNetEdge: bestAlternative?.marketId.toLowerCase() === market.id.toLowerCase()
-        ? null
-        : (bestAlternative?.netEdge ?? null),
+      bestAlternativeNetEdge: bestAlternative?.netEdge ?? null,
       minimumRotationEdgeAdvantage: policy.minimumRotationEdgeAdvantage ?? 0.15,
     });
     if (!reason) continue;
 
-    const minimumProceedsAtomic = quote.tokensOut * BigInt(Math.floor((100 - (policy.exitSlippagePct ?? policy.slippagePct)) * 100)) / 10_000n;
-    const minimumProceedsTst = rawToTokens(minimumProceedsAtomic);
     const decisionId = createHash("sha256").update(JSON.stringify({
       marketId: market.id.toLowerCase(), outcomeIndex: position.outcomeIndex, shares: position.shares,
       reason, assessmentObservedAt: assessment.observedAt,

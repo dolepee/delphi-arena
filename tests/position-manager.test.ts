@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Assessment, PositionView } from "../src/model.js";
-import { exitReason } from "../src/position-manager.js";
+import { bestAlternativeForMarket, exitReason, remainingAverageCostPerShare } from "../src/position-manager.js";
 
 const position: PositionView = {
   marketId: "0x1111111111111111111111111111111111111111",
@@ -32,7 +32,7 @@ describe("position exit policy", () => {
     expect(exitReason({
       position,
       assessment: { ...assessment, outcomeIndex: 1, evidenceClass: "published_result", probability: 0.99 },
-      quotedProceedsTst: 10,
+      minimumProceedsTst: 10,
       averageCostPerShare: 0.7,
       minimumProfitTakeReturnPct: 3,
       maximumHoldEdgeForProfitTake: 0.02,
@@ -43,7 +43,7 @@ describe("position exit policy", () => {
     expect(exitReason({
       position,
       assessment,
-      quotedProceedsTst: 80,
+      minimumProceedsTst: 80,
       averageCostPerShare: 0.7,
       minimumProfitTakeReturnPct: 3,
       maximumHoldEdgeForProfitTake: 0.02,
@@ -54,7 +54,7 @@ describe("position exit policy", () => {
     expect(exitReason({
       position,
       assessment: { ...assessment, probability: 0.99, evidenceClass: "published_result" },
-      quotedProceedsTst: 92,
+      minimumProceedsTst: 92,
       averageCostPerShare: 0.7,
       minimumProfitTakeReturnPct: 3,
       maximumHoldEdgeForProfitTake: 0.02,
@@ -65,7 +65,7 @@ describe("position exit policy", () => {
     expect(exitReason({
       position,
       assessment: { ...assessment, probability: 0.99, evidenceClass: "official_schedule" },
-      quotedProceedsTst: 92,
+      minimumProceedsTst: 92,
       averageCostPerShare: 0.9,
       minimumProfitTakeReturnPct: 3,
       maximumHoldEdgeForProfitTake: 0.02,
@@ -82,18 +82,69 @@ describe("position exit policy", () => {
       maximumHoldEdgeForProfitTake: 0.02,
       minimumRotationEdgeAdvantage: 0.15,
     };
-    expect(exitReason({ ...base, quotedProceedsTst: 88, averageCostPerShare: 0.9, bestAlternativeNetEdge: 0.62 })).toBeNull();
-    expect(exitReason({ ...base, quotedProceedsTst: 92, averageCostPerShare: 0.9, bestAlternativeNetEdge: 0.2 })).toBeNull();
+    expect(exitReason({ ...base, minimumProceedsTst: 88, averageCostPerShare: 0.9, bestAlternativeNetEdge: 0.62 })).toBeNull();
+    expect(exitReason({ ...base, minimumProceedsTst: 92, averageCostPerShare: 0.9, bestAlternativeNetEdge: 0.2 })).toBeNull();
   });
 
   it("does not profit-take without a known cost basis", () => {
     expect(exitReason({
       position,
       assessment,
-      quotedProceedsTst: 80,
+      minimumProceedsTst: 80,
       averageCostPerShare: null,
       minimumProfitTakeReturnPct: 3,
       maximumHoldEdgeForProfitTake: 0.02,
     })).toBeNull();
+  });
+
+  it("reserves exit slippage before approving a profit or rotation", () => {
+    const common = {
+      position,
+      assessment,
+      averageCostPerShare: 0.97,
+      minimumProfitTakeReturnPct: 3,
+      maximumHoldEdgeForProfitTake: 0.02,
+    };
+    expect(exitReason({ ...common, minimumProceedsTst: 96, bestAlternativeNetEdge: 0.62 })).toBeNull();
+    expect(exitReason({ ...common, minimumProceedsTst: 98 })).toBeNull();
+  });
+});
+
+describe("remaining inventory cost basis", () => {
+  const confirmedBuy = (decisionId: string, shares: number, cost: number, createdAt: number) => ({
+    decisionId: decisionId.repeat(64), marketId: position.marketId, outcomeIndex: position.outcomeIndex,
+    shares, quotedCostTst: cost, status: "CONFIRMED" as const, createdAt, transactionHash: `0x${decisionId.repeat(64)}`,
+  });
+  const confirmedExit = (decisionId: string, shares: number, createdAt: number) => ({
+    decisionId: decisionId.repeat(64), marketId: position.marketId, outcomeIndex: position.outcomeIndex,
+    shares, quotedProceedsTst: shares * 0.8, minimumProceedsTst: shares * 0.78,
+    reason: "PROFIT_TAKE" as const, status: "CONFIRMED" as const, createdAt,
+    transactionHash: `0x${decisionId.repeat(64)}`,
+  });
+
+  it("excludes a closed lot before evaluating a reopened position", () => {
+    expect(remainingAverageCostPerShare({
+      position: { ...position, shares: 100 },
+      buys: [confirmedBuy("a", 100, 70, 1), confirmedBuy("b", 100, 90, 3)],
+      exits: [confirmedExit("c", 100, 2)],
+    })).toBeCloseTo(0.9);
+  });
+
+  it("fails closed when ledger inventory cannot explain the live position", () => {
+    expect(remainingAverageCostPerShare({
+      position: { ...position, shares: 100 },
+      buys: [confirmedBuy("a", 50, 35, 1)],
+      exits: [],
+    })).toBeNull();
+  });
+});
+
+describe("rotation alternative selection", () => {
+  it("uses the strongest different market when the global best is the current one", () => {
+    expect(bestAlternativeForMarket([
+      { marketId: position.marketId, netEdge: 0.7 },
+      { marketId: "0x2222222222222222222222222222222222222222", netEdge: 0.6 },
+      { marketId: "0x3333333333333333333333333333333333333333", netEdge: 0.5 },
+    ], position.marketId)?.netEdge).toBe(0.6);
   });
 });
