@@ -84,7 +84,9 @@ export function assessmentEvidenceFingerprint(
     marketId: assessment.marketId.toLowerCase(),
     outcomeIndex: assessment.outcomeIndex,
     evidenceClass: assessment.evidenceClass,
-    sources: assessment.sources.map((source) => [source.url, source.kind, source.valueHash]),
+    sources: assessment.sources
+      .map((source) => [source.url, source.kind, source.valueHash])
+      .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))),
   })).digest("hex");
 }
 

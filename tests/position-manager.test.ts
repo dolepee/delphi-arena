@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Assessment, PositionView } from "../src/model.js";
-import { bestAlternativeForMarket, exitReason, isPastMarketResolution, positionLedgerGeneration, postExitBookForRotation, remainingAverageCostPerShare } from "../src/position-manager.js";
+import { assessmentForPosition, bestAlternativeForMarket, exitReason, isPastMarketResolution, positionLedgerGeneration, postExitBookForRotation, remainingAverageCostPerShare } from "../src/position-manager.js";
 
 const position: PositionView = {
   marketId: "0x1111111111111111111111111111111111111111",
@@ -33,6 +33,32 @@ describe("position exit policy", () => {
     expect(isPastMarketResolution(null, now)).toBe(false);
     expect(isPastMarketResolution(undefined, now)).toBe(false);
     expect(isPastMarketResolution("2026-08-13T19:59:59.999Z", now)).toBe(true);
+  });
+
+  it("prioritizes a valid published result over a newer forecast", () => {
+    const result = { ...assessment, outcomeIndex: 1, evidenceClass: "published_result" as const, probability: 0.99 };
+    const newerForecast = {
+      ...assessment,
+      observedAt: "2026-08-13T20:01:00.000Z",
+      expiresAt: "2026-08-13T20:10:00.000Z",
+    };
+    expect(assessmentForPosition({
+      assessments: [result, newerForecast], position,
+      market: { outcomes: ["Yes", "No"], prices: [0.8, 0.2] },
+      policy: { minimumEvidenceSources: 1, maximumAssessmentAgeMinutes: 30 } as never,
+      now: Date.parse("2026-08-13T20:02:00.000Z"),
+    })?.outcomeIndex).toBe(1);
+  });
+
+  it("refuses conflicting valid published results", () => {
+    const first = { ...assessment, evidenceClass: "published_result" as const, probability: 0.99 };
+    const second = { ...assessment, outcomeIndex: 1, evidenceClass: "published_result" as const, probability: 0.99 };
+    expect(assessmentForPosition({
+      assessments: [first, second], position,
+      market: { outcomes: ["Yes", "No"], prices: [0.8, 0.2] },
+      policy: { minimumEvidenceSources: 1, maximumAssessmentAgeMinutes: 30 } as never,
+      now: Date.parse("2026-08-13T20:01:00.000Z"),
+    })).toBeNull();
   });
 
   it("exits immediately on a high-confidence published-result flip", () => {

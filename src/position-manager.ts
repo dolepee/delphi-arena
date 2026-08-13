@@ -21,6 +21,29 @@ export function isPastMarketResolution(resolvesAt: string | null | undefined, no
   return Boolean(resolvesAt) && now >= Date.parse(resolvesAt!);
 }
 
+export function assessmentForPosition(input: {
+  assessments: Assessment[];
+  position: PositionView;
+  market: { outcomes: string[]; prices: number[] };
+  policy: Awaited<ReturnType<typeof loadPolicy>>;
+  now: number;
+}): Assessment | null {
+  const valid = input.assessments.filter((assessment) =>
+    assessment.marketId.toLowerCase() === input.position.marketId.toLowerCase() &&
+    input.market.outcomes[assessment.outcomeIndex] !== undefined &&
+    input.market.prices[assessment.outcomeIndex] !== undefined &&
+    isAssessmentEvidenceValid({ assessment, policy: input.policy, now: input.now })
+  );
+  const publishedResults = valid.filter((assessment) =>
+    assessment.evidenceClass === "published_result" && assessment.confidence === "high"
+  );
+  if (new Set(publishedResults.map((assessment) => assessment.outcomeIndex)).size > 1) return null;
+  const preferred = publishedResults.length > 0
+    ? publishedResults
+    : valid.filter((assessment) => assessment.outcomeIndex === input.position.outcomeIndex);
+  return preferred.sort((left, right) => Date.parse(right.observedAt) - Date.parse(left.observedAt))[0] ?? null;
+}
+
 export function exitReason(input: {
   position: PositionView;
   assessment: Assessment;
@@ -162,14 +185,8 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
   for (const position of book.positions) {
     const market = book.markets.find((candidate) => candidate.id.toLowerCase() === position.marketId.toLowerCase());
     if (!market || market.status !== "open") continue;
-    const assessment = assessments
-      .filter((candidate) => candidate.marketId.toLowerCase() === position.marketId.toLowerCase())
-      .sort((left, right) => Date.parse(right.observedAt) - Date.parse(left.observedAt))[0];
-    if (!assessment || !isAssessmentEvidenceValid({ assessment, policy, now })) continue;
-    if (
-      market.outcomes[assessment.outcomeIndex] === undefined ||
-      market.prices[assessment.outcomeIndex] === undefined
-    ) continue;
+    const assessment = assessmentForPosition({ assessments, position, market, policy, now });
+    if (!assessment) continue;
     if (now >= Date.parse(assessment.expiresAt) || isPastMarketResolution(market.resolvesAt, now)) continue;
 
     const sharesIn = sharesToRaw(position.shares);

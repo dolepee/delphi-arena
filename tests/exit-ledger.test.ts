@@ -50,6 +50,17 @@ describe("exit ledger", () => {
       ...assessment,
       sources: [{ ...assessment.sources[0]!, observedAt: "2026-08-13T20:05:00.000Z" }],
     })).toBe(fingerprint);
+    const secondSource = {
+      url: "https://example.com/second", kind: "authoritative" as const,
+      observedAt: "2026-08-13T20:00:00.000Z", valueHash: "b".repeat(64),
+    };
+    expect(assessmentEvidenceFingerprint({
+      ...assessment,
+      sources: [assessment.sources[0]!, secondSource],
+    })).toBe(assessmentEvidenceFingerprint({
+      ...assessment,
+      sources: [secondSource, assessment.sources[0]!],
+    }));
     expect(blocksEntryForAssessment(exits, assessment.marketId, 0, "c".repeat(64))).toBe(false);
   });
 
