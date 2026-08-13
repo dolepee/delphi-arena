@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Assessment, MarketView, Policy, PositionView } from "../src/model.js";
-import { orderBudget, rankQuotedPlans, selectCandidates, validateQuote } from "../src/planner.js";
+import { maximumAdditionalShares, orderBudget, rankQuotedPlans, selectCandidates, validateQuote } from "../src/planner.js";
 
 const NOW = Date.parse("2026-08-12T12:00:00.000Z");
 const POLICY: Policy = {
@@ -272,6 +272,23 @@ describe("LMSR quote and allocation controls", () => {
   it("blocks full-live dust while preserving the bounded canary", () => {
     expect(orderBudget({ policy: POLICY, assessment: ASSESSMENT, totalEquityTst: 1000, availableTst: 4.99, deployedValueTst: 0, existingMarketValueTst: 0, mode: "full" })).toBe(0);
     expect(orderBudget({ policy: POLICY, assessment: ASSESSMENT, totalEquityTst: 1000, availableTst: 1, deployedValueTst: 0, existingMarketValueTst: 0, mode: "canary" })).toBe(1);
+  });
+
+  it("caps quote search by remaining conservative portfolio shares", () => {
+    const published = { ...ASSESSMENT, evidenceClass: "published_result" as const, probability: 0.99 };
+    expect(maximumAdditionalShares({
+      policy: POLICY,
+      assessment: published,
+      totalEquityTst: 1000,
+      positions: [{
+        marketId: "0x2222222222222222222222222222222222222222",
+        outcomeIndex: 0,
+        shares: 400,
+        markPrice: 0.9,
+      }],
+      marketId: MARKET.id,
+      mode: "full",
+    })).toBe(550);
   });
 
   it("ranks by worst-case expected TST profit before percentage edge", () => {

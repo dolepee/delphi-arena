@@ -1,0 +1,11 @@
+[Unit]
+Description=Manage Delphi Arena positions every minute
+
+[Timer]
+OnCalendar=*-*-* *:*:45
+AccuracySec=1s
+RandomizedDelaySec=3s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

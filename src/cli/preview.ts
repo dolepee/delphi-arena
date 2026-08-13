@@ -1,6 +1,6 @@
 import { client, assertSignerIdentity } from "../delphi.js";
 import { loadAssessments, loadPolicy } from "../config.js";
-import { orderBudget, selectCandidates } from "../planner.js";
+import { maximumAdditionalShares, orderBudget, selectCandidates } from "../planner.js";
 import { findQuotedPlan } from "../quote-plan.js";
 import { readBook } from "../runtime.js";
 
@@ -28,6 +28,14 @@ for (const candidate of candidates) {
       budgetTst,
       mode,
       totalEquityTst: assumedEquity,
+      maximumShares: maximumAdditionalShares({
+        policy,
+        assessment: candidate.assessment,
+        totalEquityTst: assumedEquity,
+        positions: book.positions,
+        marketId: candidate.market.id,
+        mode,
+      }),
     });
     previews.push(accepted ? {
       mode,

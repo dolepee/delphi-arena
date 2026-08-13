@@ -5,6 +5,7 @@ import {
   assessCrs35Schedule,
   assessMamdaniExecutiveOrder,
   assessSilsoSunspot,
+  assessTyphoonDolphin,
   firstSuccessfulAssessment,
   generateOfficialAssessments,
 } from "../src/official-assessors.js";
@@ -155,6 +156,48 @@ describe("NASA CRS-35 official schedule assessment", () => {
     const assessments = await generateOfficialAssessments([SILSO_MARKET, CRS_MARKET], now);
     expect(assessments).toHaveLength(1);
     expect(assessments[0]?.marketId).toBe(CRS_MARKET.id);
+  });
+});
+
+const DOLPHIN_MARKET: MarketView = {
+  id: "0x5555555555555555555555555555555555555555",
+  question: "Will Typhoon Dolphin hit Japan as a Very Strong Typhoon (85-104 kt, JMA 10-min mean) by Aug 16, 2026 09:00 UTC?",
+  outcomes: ["Yes", "No"],
+  status: "open",
+  resolvesAt: "2026-08-15T23:59:00.000Z",
+  prices: [0.31, 0.69],
+  tradingFeePct: 0.5,
+  dataSources: [],
+};
+
+describe("JMA Dolphin completed-track assessment", () => {
+  const pdfUrl = "https://www.data.jma.go.jp/typhoon/data/T2613.pdf";
+  const gsiUrl = "https://mreversegeocoder.gsi.go.jp/reverse-geocoder/LonLatToAddress?lat=26.7100&lon=128.0100";
+  const pdfText = "2026年台風第13号 DOLPHIN (2613) 15 26.7 128.0 935 45 NE: 330 SW: 185 16 26.8 128.1 935 45 NE: 330 SW: 185";
+  const gsiBody = JSON.stringify({ results: { muniCd: "47306", lv01Nm: "字古宇利" } });
+  const now = Date.parse("2026-08-13T20:00:00.000Z");
+
+  it("selects Yes when the official track crosses Kouri inside the required wind band", () => {
+    const assessment = assessTyphoonDolphin({
+      market: DOLPHIN_MARKET,
+      pdfBody: new TextEncoder().encode(pdfText),
+      pdfText,
+      pdfUrl,
+      gsiBody,
+      gsiUrl,
+      now,
+    });
+    expect(assessment?.outcomeIndex).toBe(0);
+    expect(assessment?.evidenceClass).toBe("published_result");
+    expect(assessment?.probability).toBe(0.99);
+    expect(assessment?.sources).toHaveLength(2);
+    expect(assessment?.sources[1]?.valueHash).not.toBe("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+  });
+
+  it("refuses a non-crossing track or a coordinate outside the official locality", () => {
+    const base = { market: DOLPHIN_MARKET, pdfBody: new TextEncoder().encode(pdfText), pdfText, pdfUrl, gsiBody, gsiUrl, now };
+    expect(assessTyphoonDolphin({ ...base, pdfText: "2026年台風第13号 DOLPHIN (2613) 15 26.7 128.0 935 40 16 26.8 128.1 935 40" })).toBeNull();
+    expect(assessTyphoonDolphin({ ...base, gsiBody: JSON.stringify({ results: { muniCd: "47301", lv01Nm: "別の場所" } }) })).toBeNull();
   });
 });
 

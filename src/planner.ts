@@ -189,6 +189,34 @@ export function orderBudget(input: {
   return budget;
 }
 
+export function maximumAdditionalShares(input: {
+  policy: Policy;
+  assessment: Assessment;
+  totalEquityTst: number;
+  positions: PositionView[];
+  marketId: string;
+  mode: "canary" | "full";
+}): number {
+  const resultLane = input.mode === "full" && isDeterministicPublishedResult(input.assessment);
+  const marketAllocationPct = resultLane
+    ? input.policy.maximumPublishedResultMarketAllocationPct
+    : input.policy.maximumMarketAllocationPct;
+  const portfolioAllocationPct = resultLane
+    ? input.policy.maximumPublishedResultPortfolioAllocationPct
+    : input.policy.maximumPortfolioAllocationPct;
+  const sameOutcomeShares = input.positions
+    .filter((position) =>
+      position.marketId.toLowerCase() === input.marketId.toLowerCase() &&
+      position.outcomeIndex === input.assessment.outcomeIndex
+    )
+    .reduce((total, position) => total + position.shares, 0);
+  const portfolioShares = input.positions.reduce((total, position) => total + position.shares, 0);
+  return Math.max(0, Math.min(
+    input.totalEquityTst * marketAllocationPct / 100 - sameOutcomeShares,
+    input.totalEquityTst * portfolioAllocationPct / 100 - portfolioShares,
+  ));
+}
+
 export function rankQuotedPlans(plans: QuotedPlan[]): QuotedPlan[] {
   return [...plans].sort((left, right) =>
     right.worstCaseExpectedProfitTst - left.worstCaseExpectedProfitTst ||

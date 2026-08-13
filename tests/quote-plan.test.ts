@@ -24,4 +24,19 @@ describe("binary LMSR quote search", () => {
     expect(plan!.maximumCostTst).toBeLessThanOrEqual(10);
     expect(plan!.maximumCostTst).toBeGreaterThan(9.98);
   });
+
+  it("never quotes above the supplied share-allocation room", async () => {
+    const client = { quoteBuy: async ({ sharesOut }: { sharesOut: bigint }) => ({ tokensIn: BigInt(Math.ceil(Number(sharesOut) / 1e18 * 0.6 * 1e6)) }) };
+    const plan = await findQuotedPlan({
+      client: client as never,
+      candidate,
+      policy,
+      budgetTst: 100,
+      mode: "full",
+      totalEquityTst: 1000,
+      maximumShares: 12.34,
+    });
+    expect(plan?.shares).toBeLessThanOrEqual(12.34);
+    expect(plan?.shares).toBeGreaterThan(12.3);
+  });
 });

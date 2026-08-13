@@ -6,6 +6,9 @@ const ARCTIC_PATTERN = /NSIDC Arctic sea ice extent for (\d{4}-\d{2}-\d{2}).*bel
 const SILSO_PATTERN = /SILSO estimated sunspot number for (\d{4}-\d{2}-\d{2}) UTC be ([0-9.]+) or higher/iu;
 const CRS_35_PATTERN = /SpaceX launch the Dragon CRS-35 cargo mission before ([0-9:]+) UTC on ([A-Z][a-z]{2}) ([0-9]{1,2}), (\d{4})/u;
 const NASA_CRS_35_URL = "https://www.nasa.gov/event/nasas-spacex-crs-35/";
+const TYPHOON_DOLPHIN_PATTERN = /Typhoon Dolphin hit Japan as a Very Strong Typhoon/iu;
+const JMA_DOLPHIN_POSITION_PDF_URL = "https://www.data.jma.go.jp/typhoon/data/T2613.pdf";
+const GSI_KOURI_CROSSING_URL = "https://mreversegeocoder.gsi.go.jp/reverse-geocoder/LonLatToAddress?lat=26.7100&lon=128.0100";
 const MAMDANI_EXECUTIVE_ORDER_PATTERN = /Mamdani non-emergency NYC executive order dated Aug 9-15, 2026/iu;
 const NYC_EXECUTIVE_ORDER_SEARCH_URL = "https://www.nyc.gov/bin/nyc/articlesearch.json?pageSize=100&currentPage=1&types=executive-orders&fromDate=2026-08-09&toDate=2026-08-15";
 const NYC_EXECUTIVE_ORDER_DATE_PATTERN = /August (?:9|10|11|12|13|14|15), 2026/u;
@@ -111,7 +114,9 @@ export async function assessMamdaniExecutiveOrder(input: {
 }
 
 async function extractPdfText(pdfBody: Uint8Array): Promise<string> {
-  const parser = new PDFParse({ data: pdfBody });
+  // pdf.js may transfer/detach the supplied buffer. Parse a copy so the
+  // original bytes remain available for the evidence hash.
+  const parser = new PDFParse({ data: pdfBody.slice() });
   try {
     return (await parser.getText()).text;
   } finally {
@@ -273,9 +278,88 @@ export function assessCrs35Schedule(input: {
   };
 }
 
+export function assessTyphoonDolphin(input: {
+  market: MarketView;
+  pdfBody: Uint8Array;
+  pdfText: string;
+  pdfUrl: string;
+  gsiBody: string;
+  gsiUrl: string;
+  now: number;
+}): Assessment | null {
+  if (
+    !TYPHOON_DOLPHIN_PATTERN.test(input.market.question) ||
+    input.now >= Date.parse(input.market.resolvesAt ?? "1970-01-01")
+  ) return null;
+  const normalizedPdf = input.pdfText.replace(/\s+/gu, " ");
+  if (
+    !/2026年台風第13号\s+DOLPHIN \(2613\)/u.test(normalizedPdf) ||
+    !/15 26\.7 128\.0 935 45[\s\S]{0,220}?16 26\.8 128\.1 935 45/u.test(normalizedPdf)
+  ) return null;
+  let gsi: { results?: { muniCd?: unknown; lv01Nm?: unknown } };
+  try {
+    gsi = JSON.parse(input.gsiBody) as typeof gsi;
+  } catch {
+    return null;
+  }
+  if (gsi.results?.muniCd !== "47306" || gsi.results.lv01Nm !== "字古宇利") return null;
+
+  const observedAt = new Date(input.now).toISOString();
+  const expiry = Math.min(input.now + 10 * 60_000, Date.parse(input.market.resolvesAt!));
+  if (expiry <= input.now) return null;
+  return {
+    marketId: input.market.id,
+    outcomeIndex: 0,
+    evidenceClass: "published_result",
+    probability: 0.99,
+    confidence: "high",
+    status: "actionable",
+    observedAt,
+    expiresAt: new Date(expiry).toISOString(),
+    rationale: "JMA's official Dolphin position table places the center at 26.7N, 128.0E and then 26.8N, 128.1E with 45 m/s sustained wind at both hourly analyses. That segment crosses 26.7100N, 128.0100E, which Japan's GSI identifies as Kouri, Okinawa; 45 m/s is 87.5 kt and falls inside the contract's 85-104 kt band.",
+    sources: [
+      {
+        url: input.pdfUrl,
+        kind: "authoritative",
+        observedAt,
+        valueHash: createHash("sha256").update(input.pdfBody).digest("hex"),
+      },
+      {
+        url: input.gsiUrl,
+        kind: "authoritative",
+        observedAt,
+        valueHash: createHash("sha256").update(input.gsiBody).digest("hex"),
+      },
+    ],
+  };
+}
+
 export async function generateOfficialAssessments(markets: MarketView[], now = Date.now()): Promise<Assessment[]> {
   const assessments: Assessment[] = [];
   for (const market of markets) {
+    if (TYPHOON_DOLPHIN_PATTERN.test(market.question)) {
+      try {
+        const [pdfResponse, gsiResponse] = await Promise.all([
+          fetch(JMA_DOLPHIN_POSITION_PDF_URL, { headers: { "user-agent": "Conviction-Delphi-Arena/1.0" }, signal: AbortSignal.timeout(15_000) }),
+          fetch(GSI_KOURI_CROSSING_URL, { headers: { "user-agent": "Conviction-Delphi-Arena/1.0" }, signal: AbortSignal.timeout(15_000) }),
+        ]);
+        if (!pdfResponse.ok || !gsiResponse.ok) continue;
+        const pdfBody = new Uint8Array(await pdfResponse.arrayBuffer());
+        const assessment = assessTyphoonDolphin({
+          market,
+          pdfBody,
+          pdfText: await extractPdfText(pdfBody),
+          pdfUrl: JMA_DOLPHIN_POSITION_PDF_URL,
+          gsiBody: await gsiResponse.text(),
+          gsiUrl: GSI_KOURI_CROSSING_URL,
+          now,
+        });
+        if (assessment) assessments.push(assessment);
+      } catch {
+        continue;
+      }
+      continue;
+    }
     if (MAMDANI_EXECUTIVE_ORDER_PATTERN.test(market.question)) {
       try {
         const searchResponse = await fetch(NYC_EXECUTIVE_ORDER_SEARCH_URL, {
