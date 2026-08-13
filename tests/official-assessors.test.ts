@@ -173,7 +173,7 @@ const DOLPHIN_MARKET: MarketView = {
 describe("JMA Dolphin completed-track assessment", () => {
   const pdfUrl = "https://www.data.jma.go.jp/typhoon/data/T2613.pdf";
   const gsiUrl = "https://mreversegeocoder.gsi.go.jp/reverse-geocoder/LonLatToAddress?lat=26.7100&lon=128.0100";
-  const pdfText = "2026年台風第13号 DOLPHIN (2613) 15 26.7 128.0 935 45 NE: 330 SW: 185 16 26.8 128.1 935 45 NE: 330 SW: 185";
+  const pdfText = "2026年台風第13号 DOLPHIN (2613) 位 置 表 8 7 07 27.3 N 129.4 E 950 40 08 27.2 129.2 950 40 15 26.7 128.0 935 45 NE: 330 SW: 185 16 26.8 128.1 935 45 NE: 330 SW: 185";
   const gsiBody = JSON.stringify({ results: { muniCd: "47306", lv01Nm: "字古宇利" } });
   const now = Date.parse("2026-08-13T20:00:00.000Z");
 
@@ -196,7 +196,8 @@ describe("JMA Dolphin completed-track assessment", () => {
 
   it("refuses a non-crossing track or a coordinate outside the official locality", () => {
     const base = { market: DOLPHIN_MARKET, pdfBody: new TextEncoder().encode(pdfText), pdfText, pdfUrl, gsiBody, gsiUrl, now };
-    expect(assessTyphoonDolphin({ ...base, pdfText: "2026年台風第13号 DOLPHIN (2613) 15 26.7 128.0 935 40 16 26.8 128.1 935 40" })).toBeNull();
+    expect(assessTyphoonDolphin({ ...base, pdfText: "2026年台風第13号 DOLPHIN (2613) 位 置 表 8 7 07 27.3 N 129.4 E 950 40 15 26.7 128.0 935 40 16 26.8 128.1 935 40" })).toBeNull();
+    expect(assessTyphoonDolphin({ ...base, pdfText: "2026年台風第13号 DOLPHIN (2613) 位 置 表 8 17 07 27.3 N 129.4 E 950 40 15 26.7 128.0 935 45 16 26.8 128.1 935 45" })).toBeNull();
     expect(assessTyphoonDolphin({ ...base, gsiBody: JSON.stringify({ results: { muniCd: "47301", lv01Nm: "別の場所" } }) })).toBeNull();
   });
 });

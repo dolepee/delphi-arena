@@ -233,6 +233,28 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
       !freshPosition || Math.abs(freshPosition.shares - position.shares) > 1e-6
     ) continue;
 
+    const freshQuote = await client.quoteSell({
+      marketAddress: freshMarket.id,
+      outcomeIdx: freshPosition.outcomeIndex,
+      sharesIn,
+    });
+    const freshQuotedProceedsTst = rawToTokens(freshQuote.tokensOut);
+    const freshMinimumProceedsAtomic = freshQuote.tokensOut *
+      BigInt(Math.floor((100 - (policy.exitSlippagePct ?? policy.slippagePct)) * 100)) /
+      10_000n;
+    const freshMinimumProceedsTst = rawToTokens(freshMinimumProceedsAtomic);
+    const freshReason = exitReason({
+      position: freshPosition,
+      assessment,
+      minimumProceedsTst: freshMinimumProceedsTst,
+      averageCostPerShare,
+      minimumProfitTakeReturnPct: policy.minimumProfitTakeReturnPct ?? 3,
+      maximumHoldEdgeForProfitTake: policy.maximumHoldEdgeForProfitTake ?? 0.02,
+      bestAlternativeNetEdge: bestAlternative?.netEdge ?? null,
+      minimumRotationEdgeAdvantage: policy.minimumRotationEdgeAdvantage ?? 0.15,
+    });
+    if (!freshReason || freshReason !== reason) continue;
+
     const positionGeneration = positionLedgerGeneration({ position, buys, exits });
     const decisionId = createHash("sha256").update(JSON.stringify({
       marketId: market.id.toLowerCase(), outcomeIndex: position.outcomeIndex, shares: position.shares,
@@ -241,13 +263,14 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
     if (await exitLedger.get(decisionId)) continue;
     await exitLedger.prepare({
       decisionId, marketId: market.id, outcomeIndex: position.outcomeIndex,
-      shares: position.shares, quotedProceedsTst, minimumProceedsTst, reason, createdAt: now,
+      shares: position.shares, quotedProceedsTst: freshQuotedProceedsTst,
+      minimumProceedsTst: freshMinimumProceedsTst, reason, createdAt: executionNow,
     });
     const result = await client.sellShares({
       marketAddress: market.id,
       outcomeIdx: position.outcomeIndex,
       sharesIn,
-      minTokensOut: minimumProceedsAtomic,
+      minTokensOut: freshMinimumProceedsAtomic,
     });
     await exitLedger.confirm(decisionId, result.transactionHash);
     await sendAlert("POSITION EXITED", `${reason}\n${market.question}\n${market.outcomes[position.outcomeIndex]} | ${position.shares} shares | quoted ${quotedProceedsTst.toFixed(4)} TST\n${result.transactionHash}`);

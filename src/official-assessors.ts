@@ -7,6 +7,9 @@ const SILSO_PATTERN = /SILSO estimated sunspot number for (\d{4}-\d{2}-\d{2}) UT
 const CRS_35_PATTERN = /SpaceX launch the Dragon CRS-35 cargo mission before ([0-9:]+) UTC on ([A-Z][a-z]{2}) ([0-9]{1,2}), (\d{4})/u;
 const NASA_CRS_35_URL = "https://www.nasa.gov/event/nasas-spacex-crs-35/";
 const TYPHOON_DOLPHIN_PATTERN = /Typhoon Dolphin hit Japan as a Very Strong Typhoon/iu;
+const TYPHOON_DOLPHIN_CUTOFF_PATTERN = /by Aug 16, 2026 09:00 UTC/iu;
+const TYPHOON_DOLPHIN_CUTOFF = Date.parse("2026-08-16T09:00:00.000Z");
+const TYPHOON_DOLPHIN_OBSERVED = Date.parse("2026-08-07T06:00:00.000Z");
 const JMA_DOLPHIN_POSITION_PDF_URL = "https://www.data.jma.go.jp/typhoon/data/T2613.pdf";
 const GSI_KOURI_CROSSING_URL = "https://mreversegeocoder.gsi.go.jp/reverse-geocoder/LonLatToAddress?lat=26.7100&lon=128.0100";
 const MAMDANI_EXECUTIVE_ORDER_PATTERN = /Mamdani non-emergency NYC executive order dated Aug 9-15, 2026/iu;
@@ -289,12 +292,15 @@ export function assessTyphoonDolphin(input: {
 }): Assessment | null {
   if (
     !TYPHOON_DOLPHIN_PATTERN.test(input.market.question) ||
+    !TYPHOON_DOLPHIN_CUTOFF_PATTERN.test(input.market.question) ||
     input.now >= Date.parse(input.market.resolvesAt ?? "1970-01-01")
   ) return null;
   const normalizedPdf = input.pdfText.replace(/\s+/gu, " ");
   if (
     !/2026年台風第13号\s+DOLPHIN \(2613\)/u.test(normalizedPdf) ||
-    !/15 26\.7 128\.0 935 45[\s\S]{0,220}?16 26\.8 128\.1 935 45/u.test(normalizedPdf)
+    !/位\s*置\s*表/u.test(normalizedPdf) ||
+    !/8 7 07 27\.3 N 129\.4 E[\s\S]{0,2500}?15 26\.7 128\.0 935 45[\s\S]{0,220}?16 26\.8 128\.1 935 45/u.test(normalizedPdf) ||
+    TYPHOON_DOLPHIN_OBSERVED >= TYPHOON_DOLPHIN_CUTOFF
   ) return null;
   let gsi: { results?: { muniCd?: unknown; lv01Nm?: unknown } };
   try {
