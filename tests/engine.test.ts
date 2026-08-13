@@ -31,7 +31,7 @@ describe("candidate quote isolation", () => {
     const client = { quoteBuy: async ({ marketAddress, sharesOut }: { marketAddress: string; sharesOut: bigint }) => {
       if (marketAddress === failed.market.id) throw new Error("upstream quote failed");
       const shares = Number(sharesOut) / 1e18;
-      const price = marketAddress === small.market.id ? 0.7 : 0.68;
+      const price = marketAddress === small.market.id ? 0.7 : 0.675;
       return { tokensIn: BigInt(Math.ceil(shares * price * 1e6)) };
     } };
     const result = await quoteCandidates({

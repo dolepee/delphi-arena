@@ -103,7 +103,7 @@ export function validateQuote(input: {
   const averagePrice = input.quotedCostTst / input.shares;
   const maximumAveragePrice = maximumCostTst / input.shares;
   const netEdge = input.candidate.assessment.probability - maximumAveragePrice;
-  const priceImpact = averagePrice - input.candidate.spotPrice;
+  const priceImpact = maximumAveragePrice - input.candidate.spotPrice;
   const worstCaseExpectedProfitTst =
     input.shares * input.candidate.assessment.probability - maximumCostTst;
   if (

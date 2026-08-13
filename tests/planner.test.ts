@@ -156,6 +156,21 @@ describe("LMSR quote and allocation controls", () => {
     expect(accepted?.netEdge).toBeCloseTo(0.082);
   });
 
+  it("rejects a quote whose slippage-authorized fill breaches the impact ceiling", () => {
+    expect(validateQuote({
+      candidate: {
+        ...candidate,
+        spotPrice: 0.6,
+        assessment: { ...candidate.assessment, probability: 0.9 },
+      },
+      policy: POLICY,
+      shares: 10,
+      quotedCostTst: 6.39,
+      budgetTst: 7,
+      mode: "full",
+    })).toBeNull();
+  });
+
   it("uses an intermediate floor for decisive official schedules", () => {
     const scheduled = { ...ASSESSMENT, evidenceClass: "official_schedule" as const, probability: 0.99 };
     const [candidate] = selectCandidates({
@@ -214,7 +229,7 @@ describe("LMSR quote and allocation controls", () => {
       },
       policy: POLICY,
       shares: 100,
-      quotedCostTst: 68,
+      quotedCostTst: 67.5,
       budgetTst: 100,
       mode: "full",
     })!;
