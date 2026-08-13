@@ -48,10 +48,13 @@ describe("candidate quote isolation", () => {
 });
 
 describe("pre-write freshness", () => {
-  const plan = { assessment: {
-    observedAt: "2026-08-13T11:32:00.000Z",
-    expiresAt: "2026-08-13T12:02:00.000Z",
-  } };
+  const plan = {
+    assessment: {
+      observedAt: "2026-08-13T11:32:00.000Z",
+      expiresAt: "2026-08-13T12:02:00.000Z",
+    },
+    market: { resolvesAt: "2026-08-14T00:00:00.000Z" },
+  };
 
   it("refuses a quoted plan once its evidence or the competition has expired", () => {
     expect(isPlanExecutableAt(plan, "2026-08-23T23:59:00.000Z", 30, Date.parse("2026-08-13T12:01:59.999Z"))).toBe(true);
@@ -60,11 +63,26 @@ describe("pre-write freshness", () => {
   });
 
   it("refuses evidence after the configured maximum age even if expiresAt is later", () => {
-    const longExpiry = { assessment: {
-      observedAt: "2026-08-13T11:30:00.000Z",
-      expiresAt: "2026-08-13T14:00:00.000Z",
-    } };
+    const longExpiry = {
+      assessment: {
+        observedAt: "2026-08-13T11:30:00.000Z",
+        expiresAt: "2026-08-13T14:00:00.000Z",
+      },
+      market: { resolvesAt: "2026-08-14T00:00:00.000Z" },
+    };
     expect(isPlanExecutableAt(longExpiry, "2026-08-23T23:59:00.000Z", 30, Date.parse("2026-08-13T12:00:00.000Z"))).toBe(true);
     expect(isPlanExecutableAt(longExpiry, "2026-08-23T23:59:00.000Z", 30, Date.parse("2026-08-13T12:00:00.001Z"))).toBe(false);
+  });
+
+  it("refuses a plan at the market resolution boundary even if evidence remains fresh", () => {
+    const closing = {
+      assessment: {
+        observedAt: "2026-08-13T11:59:00.000Z",
+        expiresAt: "2026-08-13T12:10:00.000Z",
+      },
+      market: { resolvesAt: "2026-08-13T12:00:00.000Z" },
+    };
+    expect(isPlanExecutableAt(closing, "2026-08-23T23:59:00.000Z", 30, Date.parse("2026-08-13T11:59:59.999Z"))).toBe(true);
+    expect(isPlanExecutableAt(closing, "2026-08-23T23:59:00.000Z", 30, Date.parse("2026-08-13T12:00:00.000Z"))).toBe(false);
   });
 });

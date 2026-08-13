@@ -11,13 +11,17 @@ import { sendAlert } from "./alerts.js";
 const sharesToRaw = (shares: number) => BigInt(Math.floor(shares * 1e6)) * 10n ** 12n;
 
 export function isPlanExecutableAt(
-  plan: { assessment: { observedAt: string; expiresAt: string } },
+  plan: {
+    assessment: { observedAt: string; expiresAt: string };
+    market: { resolvesAt?: string | null };
+  },
   competitionEndsAt: string,
   maximumAssessmentAgeMinutes: number,
   now: number,
 ): boolean {
   return now < Date.parse(plan.assessment.expiresAt) &&
     now - Date.parse(plan.assessment.observedAt) <= maximumAssessmentAgeMinutes * 60_000 &&
+    (!plan.market.resolvesAt || now < Date.parse(plan.market.resolvesAt)) &&
     now < Date.parse(competitionEndsAt);
 }
 
