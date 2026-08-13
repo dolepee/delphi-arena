@@ -20,9 +20,9 @@ interface NycExecutiveOrderSearch {
   results?: unknown;
 }
 
-function exactNycExecutiveOrder(results: unknown): NycExecutiveOrderResult | null {
-  if (!Array.isArray(results)) return null;
-  const matches = results.filter((value): value is NycExecutiveOrderResult => {
+function exactNycExecutiveOrders(results: unknown): NycExecutiveOrderResult[] {
+  if (!Array.isArray(results)) return [];
+  return results.filter((value): value is NycExecutiveOrderResult => {
     if (!value || typeof value !== "object") return false;
     const result = value as NycExecutiveOrderResult;
     return typeof result.title === "string" &&
@@ -32,8 +32,7 @@ function exactNycExecutiveOrder(results: unknown): NycExecutiveOrderResult | nul
       NYC_EXECUTIVE_ORDER_DATE_PATTERN.test(result.articleDate) &&
       typeof result.link === "string" &&
       /^\/mayors-office\/news\/2026\/08\/executive-order-[a-z0-9.-]+\.html$/u.test(result.link);
-  });
-  return matches.length === 1 ? matches[0]! : null;
+  }).sort((left, right) => String(left.title).localeCompare(String(right.title)));
 }
 
 export async function assessMamdaniExecutiveOrder(input: {
@@ -57,9 +56,10 @@ export async function assessMamdaniExecutiveOrder(input: {
   } catch {
     return null;
   }
-  const result = exactNycExecutiveOrder(search.results);
+  const result = exactNycExecutiveOrders(search.results).find((candidate) =>
+    input.detailUrl === new URL(String(candidate.link), "https://www.nyc.gov").toString()
+  );
   if (!result || typeof result.title !== "string") return null;
-  if (input.detailUrl !== new URL(String(result.link), "https://www.nyc.gov").toString()) return null;
   const escapedTitle = result.title.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
   if (!new RegExp(`<h1[^>]*>\\s*${escapedTitle}\\s*</h1>`, "iu").test(input.detailBody)) return null;
   const number = /No\. (\d+)$/u.exec(result.title)?.[1];
@@ -270,30 +270,35 @@ export async function generateOfficialAssessments(markets: MarketView[], now = D
         if (!searchResponse.ok) continue;
         const searchBody = await searchResponse.text();
         const search = JSON.parse(searchBody) as NycExecutiveOrderSearch;
-        const result = exactNycExecutiveOrder(search.results);
-        if (!result || typeof result.link !== "string" || typeof result.title !== "string") continue;
-        const number = /No\. (\d+)$/u.exec(result.title)?.[1];
-        if (!number) continue;
-        const detailUrl = new URL(result.link, "https://www.nyc.gov").toString();
-        const pdfUrl = `https://www.nyc.gov/content/dam/nycgov/mayors-office/downloads/pdf/executive-orders/2026/eo-${number}.pdf`;
-        const [detailResponse, pdfResponse] = await Promise.all([
-          fetch(detailUrl, { headers: { "user-agent": "Conviction-Delphi-Arena/1.0" }, signal: AbortSignal.timeout(15_000) }),
-          fetch(pdfUrl, { headers: { "user-agent": "Conviction-Delphi-Arena/1.0" }, signal: AbortSignal.timeout(15_000) }),
-        ]);
-        if (!detailResponse.ok || !pdfResponse.ok) continue;
-        const pdfBody = new Uint8Array(await pdfResponse.arrayBuffer());
-        const assessment = await assessMamdaniExecutiveOrder({
-          market,
-          searchBody,
-          detailBody: await detailResponse.text(),
-          pdfBody,
-          pdfText: await extractPdfText(pdfBody),
-          sourceUrl: NYC_EXECUTIVE_ORDER_SEARCH_URL,
-          detailUrl,
-          pdfUrl,
-          now,
-        });
-        if (assessment) assessments.push(assessment);
+        const results = exactNycExecutiveOrders(search.results);
+        for (const result of results) {
+          if (typeof result.link !== "string" || typeof result.title !== "string") continue;
+          const number = /No\. (\d+)$/u.exec(result.title)?.[1];
+          if (!number) continue;
+          const detailUrl = new URL(result.link, "https://www.nyc.gov").toString();
+          const pdfUrl = `https://www.nyc.gov/content/dam/nycgov/mayors-office/downloads/pdf/executive-orders/2026/eo-${number}.pdf`;
+          const [detailResponse, pdfResponse] = await Promise.all([
+            fetch(detailUrl, { headers: { "user-agent": "Conviction-Delphi-Arena/1.0" }, signal: AbortSignal.timeout(15_000) }),
+            fetch(pdfUrl, { headers: { "user-agent": "Conviction-Delphi-Arena/1.0" }, signal: AbortSignal.timeout(15_000) }),
+          ]);
+          if (!detailResponse.ok || !pdfResponse.ok) continue;
+          const pdfBody = new Uint8Array(await pdfResponse.arrayBuffer());
+          const assessment = await assessMamdaniExecutiveOrder({
+            market,
+            searchBody,
+            detailBody: await detailResponse.text(),
+            pdfBody,
+            pdfText: await extractPdfText(pdfBody),
+            sourceUrl: NYC_EXECUTIVE_ORDER_SEARCH_URL,
+            detailUrl,
+            pdfUrl,
+            now,
+          });
+          if (assessment) {
+            assessments.push(assessment);
+            break;
+          }
+        }
       } catch {
         continue;
       }

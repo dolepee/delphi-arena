@@ -197,7 +197,7 @@ describe("NYC non-emergency executive-order release", () => {
     expect(assessment?.probability).toBe(0.99);
   });
 
-  it("refuses absence, emergency orders, ambiguous multiple matches, and a mismatched PDF", async () => {
+  it("refuses absence, emergency orders, and a mismatched PDF", async () => {
     const pdfBody = new TextEncoder().encode(pdfText);
     const base = {
       market: MAMDANI_MARKET,
@@ -212,7 +212,22 @@ describe("NYC non-emergency executive-order release", () => {
     expect(await assessMamdaniExecutiveOrder({ ...base, searchBody: JSON.stringify({ results: [] }) })).toBeNull();
     expect(await assessMamdaniExecutiveOrder({ ...base, searchBody: JSON.stringify({ results: [{ link: "/mayors-office/news/2026/08/emergency-executive-order-no--1-44.html", title: "Emergency Executive Order No. 1.44", articleDate: "August 13, 2026" }] }) })).toBeNull();
     const match = { link: "/mayors-office/news/2026/08/executive-order-no--20.html", title: "Executive Order No. 20", articleDate: "August 13, 2026" };
-    expect(await assessMamdaniExecutiveOrder({ ...base, searchBody: JSON.stringify({ results: [match, match] }) })).toBeNull();
     expect(await assessMamdaniExecutiveOrder({ ...base, pdfText: "EXECUTIVE ORDER No. 19 July 23, 2026 Zahran Kwame Mamdani Mayor", searchBody: JSON.stringify({ results: [match] }) })).toBeNull();
+  });
+
+  it("accepts the matching official order when the city publishes more than one in the window", async () => {
+    const match = { link: "/mayors-office/news/2026/08/executive-order-no--20.html", title: "Executive Order No. 20", articleDate: "August 13, 2026" };
+    const other = { link: "/mayors-office/news/2026/08/executive-order-no--21.html", title: "Executive Order No. 21", articleDate: "August 14, 2026" };
+    expect(await assessMamdaniExecutiveOrder({
+      market: MAMDANI_MARKET,
+      searchBody: JSON.stringify({ results: [other, match] }),
+      detailBody: '<h1>Executive Order No. 20</h1><a href="/content/dam/nycgov/mayors-office/downloads/pdf/executive-orders/2026/eo-20.pdf">Download</a>',
+      pdfBody: new TextEncoder().encode(pdfText),
+      pdfText,
+      sourceUrl,
+      detailUrl,
+      pdfUrl,
+      now,
+    })).not.toBeNull();
   });
 });
