@@ -121,7 +121,7 @@ export async function runTradingCycle(client: DelphiClient, now = Date.now()) {
         if (await ledger.get(plan.decisionId)) continue;
         const freshBook = await readBook(client);
         if (!isPlanWithinBookLimits({ plan, policy, book: freshBook })) continue;
-        const maximumCost = BigInt(Math.ceil(plan.maximumCostTst * 1e6));
+        const maximumCost = plan.maximumCostAtomic;
         await ledger.prepare({
           decisionId: plan.decisionId,
           marketId: plan.market.id,

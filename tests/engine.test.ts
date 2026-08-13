@@ -103,6 +103,7 @@ describe("fresh-book allocation", () => {
     shares: 50,
     quotedCostTst: 35,
     maximumCostTst: 35.7,
+    maximumCostAtomic: 35_700_000n,
     averagePrice: 0.7,
     maximumAveragePrice: 0.714,
     netEdge: 0.276,

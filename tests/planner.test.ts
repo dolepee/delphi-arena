@@ -175,6 +175,28 @@ describe("LMSR quote and allocation controls", () => {
     })).toBeNull();
   });
 
+  it("retains the exact atomic max-cost ceiling without a float round-trip", () => {
+    const precise = validateQuote({
+      candidate: {
+        ...candidate,
+        spotPrice: 0.6,
+        assessment: {
+          ...candidate.assessment,
+          evidenceClass: "published_result" as const,
+          probability: 0.99,
+        },
+      },
+      policy: POLICY,
+      shares: 100,
+      quotedCostTst: 63.897165,
+      budgetTst: 70,
+      mode: "full",
+      totalEquityTst: 1000,
+    });
+    expect(precise?.maximumCostAtomic).toBe(65_175_109n);
+    expect(precise?.maximumCostTst).toBe(65.175109);
+  });
+
   it("uses an intermediate floor for decisive official schedules", () => {
     const scheduled = { ...ASSESSMENT, evidenceClass: "official_schedule" as const, probability: 0.99 };
     const [candidate] = selectCandidates({

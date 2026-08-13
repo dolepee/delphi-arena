@@ -87,6 +87,7 @@ export interface QuotedPlan extends Candidate {
   shares: number;
   quotedCostTst: number;
   maximumCostTst: number;
+  maximumCostAtomic: bigint;
   averagePrice: number;
   maximumAveragePrice: number;
   netEdge: number;

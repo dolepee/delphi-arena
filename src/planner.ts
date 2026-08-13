@@ -113,9 +113,10 @@ export function validateQuote(input: {
   ) return null;
   // quoteBuy().tokensIn is the SDK's total cash-in and already includes the
   // market fee. Apply slippage once, then gate the worst executable price.
-  const maximumCostTst = Math.ceil(
+  const maximumCostAtomic = BigInt(Math.ceil(
     input.quotedCostTst * (1 + input.policy.slippagePct / 100) * 1e6,
-  ) / 1e6;
+  ));
+  const maximumCostTst = Number(maximumCostAtomic) / 1e6;
   if (maximumCostTst > input.budgetTst) return null;
   const averagePrice = input.quotedCostTst / input.shares;
   const maximumAveragePrice = maximumCostTst / input.shares;
@@ -149,6 +150,7 @@ export function validateQuote(input: {
     shares: input.shares,
     quotedCostTst: input.quotedCostTst,
     maximumCostTst,
+    maximumCostAtomic,
     averagePrice,
     maximumAveragePrice,
     netEdge,
