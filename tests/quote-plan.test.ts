@@ -39,4 +39,18 @@ describe("binary LMSR quote search", () => {
     expect(plan?.shares).toBeLessThanOrEqual(12.34);
     expect(plan?.shares).toBeGreaterThan(12.3);
   });
+
+  it("rejects a final full-mode plan trimmed below the minimum order", async () => {
+    const client = { quoteBuy: async ({ sharesOut }: { sharesOut: bigint }) => ({ tokensIn: BigInt(Math.ceil(Number(sharesOut) / 1e18 * 0.6 * 1e6)) }) };
+    const plan = await findQuotedPlan({
+      client: client as never,
+      candidate,
+      policy,
+      budgetTst: 250,
+      mode: "full",
+      totalEquityTst: 1106,
+      maximumShares: 1.65,
+    });
+    expect(plan).toBeNull();
+  });
 });
