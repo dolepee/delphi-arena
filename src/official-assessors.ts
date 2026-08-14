@@ -40,6 +40,7 @@ interface NycExecutiveOrderSearch {
 interface NominationFeedItem {
   publishedAt: number;
   title: string;
+  nominationCount: number | null;
 }
 
 function xmlText(value: string): string {
@@ -57,7 +58,25 @@ function nominationFeedItems(body: string): NominationFeedItem[] {
     const title = xmlText(/<title>([\s\S]*?)<\/title>/u.exec(item)?.[1] ?? "");
     const publishedAt = Date.parse(xmlText(/<pubDate>([\s\S]*?)<\/pubDate>/u.exec(item)?.[1] ?? ""));
     if (!Number.isFinite(publishedAt) || !/Nominations?.*Sent to the Senate/iu.test(title)) return [];
-    return [{ publishedAt, title }];
+    const content = /<content:encoded><!\[CDATA\[([\s\S]*?)\]\]><\/content:encoded>/u.exec(item)?.[1];
+    let nominationCount: number | null = null;
+    if (content !== undefined) {
+      const header = /<p(?:\s[^>]*)?>\s*NOMINATIONS? SENT TO THE SENATE:\s*<\/p>/iu.exec(content);
+      if (header) {
+        const afterHeader = content.slice(header.index + header[0].length);
+        const end = /<p(?:\s[^>]*)?>\s*(?:WITHDRAWALS?|APPOINTMENTS?)\b|<p(?:\s[^>]*)?>\s*The post\b/iu.exec(afterHeader)?.index ?? afterHeader.length;
+        const nominationSection = afterHeader.slice(0, end);
+        const entries = [...nominationSection.matchAll(/<p(?:\s[^>]*)?>([\s\S]*?)<\/p>/giu)]
+          .map((entry) => xmlText(entry[1] ?? ""))
+          // The White House's current feed uses one paragraph per nominee in
+          // the stable form "Name, of Jurisdiction, to be Office". Ignore
+          // explanatory/category prose; an unfamiliar nominee shape therefore
+          // undercounts and fails closed rather than creating a false YES.
+          .filter((entry) => /,\s+of\b[\s\S]*?,\s+to be\b/iu.test(entry));
+        nominationCount = entries.length > 0 ? entries.length : null;
+      }
+    }
+    return [{ publishedAt, title, nominationCount }];
   }).sort((left, right) => left.publishedAt - right.publishedAt);
 }
 
@@ -87,8 +106,35 @@ export function assessTrumpNominations(input: {
 
   const items = nominationFeedItems(input.feedBody);
   const latest = items.at(-1);
-  if (!latest || latest.publishedAt !== Date.parse("2026-08-07T15:09:20.000Z")) return null;
-  if (items.some((item) => item.publishedAt >= NOMINATIONS_WINDOW_START)) return null;
+  if (!latest) return null;
+  const inWindow = items.filter((item) =>
+    item.publishedAt >= NOMINATIONS_WINDOW_START && item.publishedAt < NOMINATIONS_WINDOW_END
+  );
+  if (inWindow.some((item) => item.nominationCount === null)) return null;
+  const inWindowCount = inWindow.reduce((total, item) => total + (item.nominationCount ?? 0), 0);
+  if (inWindowCount >= 5) {
+    const observedAt = new Date(input.now).toISOString();
+    const expiry = Math.min(input.now + 10 * 60_000, Date.parse(input.market.resolvesAt!));
+    if (expiry <= input.now) return null;
+    return {
+      marketId: input.market.id,
+      outcomeIndex: 0,
+      evidenceClass: "published_result",
+      probability: 0.99,
+      confidence: "high",
+      status: "actionable",
+      observedAt,
+      expiresAt: new Date(expiry).toISOString(),
+      rationale: `The White House official feed contains ${inWindowCount} individually enumerated nominations sent to the Senate during Aug 9-15, meeting the contract threshold.`,
+      sources: [{
+        url: input.feedUrl,
+        kind: "authoritative",
+        observedAt,
+        valueHash: createHash("sha256").update(input.feedBody).digest("hex"),
+      }],
+    };
+  }
+  if (inWindow.length > 0 || latest.publishedAt !== Date.parse("2026-08-07T15:09:20.000Z")) return null;
 
   const historical = items.filter((item) => item.publishedAt < NOMINATIONS_WINDOW_START);
   const earliest = historical.at(0)?.publishedAt;

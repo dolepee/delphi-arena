@@ -364,6 +364,14 @@ function nominationsFeed(extra = ""): string {
   return `<rss><channel>${items.join("")}${extra}</channel></rss>`;
 }
 
+function nominationRelease(input: { publishedAt: string; names: string[] }): string {
+  return `<item><title>Nominations Sent to the Senate</title><pubDate>${new Date(input.publishedAt).toUTCString()}</pubDate><content:encoded><![CDATA[
+    <p class="has-text-align-left">NOMINATIONS SENT TO THE SENATE:</p>
+    ${input.names.map((name) => `<p>${name}, of Virginia, to be an Assistant Secretary.</p>`).join("")}
+    <p>The post <a href="https://www.whitehouse.gov/">Nominations Sent to the Senate</a> appeared first on The White House.</p>
+  ]]></content:encoded></item>`;
+}
+
 describe("White House/Senate nominations forecast", () => {
   const base = {
     market: NOMINATIONS_MARKET,
@@ -379,7 +387,48 @@ describe("White House/Senate nominations forecast", () => {
     expect(assessment?.sources).toHaveLength(1);
   });
 
-  it("refuses a new in-window White House release", () => {
+  it("refuses a new in-window White House release below the threshold", () => {
+    const extra = nominationRelease({
+      publishedAt: "2026-08-14T15:00:00.000Z",
+      names: ["Alice One", "Bob Two", "Carol Three", "David Four"],
+    });
+    expect(assessTrumpNominations({ ...base, feedBody: nominationsFeed(extra) })).toBeNull();
+  });
+
+  it("does not count explanatory paragraphs as nominees", () => {
+    const release = nominationRelease({
+      publishedAt: "2026-08-14T15:00:00.000Z",
+      names: ["Alice One", "Bob Two", "Carol Three", "David Four"],
+    }).replace(
+      '<p class="has-text-align-left">NOMINATIONS SENT TO THE SENATE:</p>',
+      '<p class="has-text-align-left">NOMINATIONS SENT TO THE SENATE:</p><p>The following slate supports several departments.</p>',
+    );
+    expect(assessTrumpNominations({ ...base, feedBody: nominationsFeed(release) })).toBeNull();
+  });
+
+  it("selects Yes as a published result after five enumerated in-window nominations", () => {
+    const extra = nominationRelease({
+      publishedAt: "2026-08-14T15:00:00.000Z",
+      names: ["Alice One", "Bob Two", "Carol Three", "David Four", "Eve Five"],
+    });
+    const assessment = assessTrumpNominations({ ...base, feedBody: nominationsFeed(extra) });
+    expect(assessment?.outcomeIndex).toBe(0);
+    expect(assessment?.evidenceClass).toBe("published_result");
+    expect(assessment?.probability).toBe(0.99);
+    expect(assessment?.rationale).toContain("5 individually enumerated nominations");
+  });
+
+  it("adds nominations across multiple in-window releases", () => {
+    const extra = [
+      nominationRelease({ publishedAt: "2026-08-14T15:00:00.000Z", names: ["Alice One", "Bob Two"] }),
+      nominationRelease({ publishedAt: "2026-08-15T15:00:00.000Z", names: ["Carol Three", "David Four", "Eve Five"] }),
+    ].join("");
+    const assessment = assessTrumpNominations({ ...base, feedBody: nominationsFeed(extra) });
+    expect(assessment?.outcomeIndex).toBe(0);
+    expect(assessment?.evidenceClass).toBe("published_result");
+  });
+
+  it("fails closed when an in-window release cannot be enumerated", () => {
     const extra = '<item><title>Nominations Sent to the Senate</title><pubDate>Fri, 14 Aug 2026 15:00:00 +0000</pubDate></item>';
     expect(assessTrumpNominations({ ...base, feedBody: nominationsFeed(extra) })).toBeNull();
   });
