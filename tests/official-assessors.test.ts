@@ -5,6 +5,7 @@ import {
   assessCrs35Schedule,
   assessFederalRegisterCount,
   assessMamdaniExecutiveOrder,
+  assessMississippiDischarge,
   assessSilsoSunspot,
   assessTokyoObservedTemperature,
   assessTrumpNominations,
@@ -175,6 +176,95 @@ describe("Federal Register exact-count release", () => {
       sourceUrl,
       now: Date.parse("2026-08-14T21:00:00.000Z"),
     })).toBeNull();
+  });
+});
+
+const MISSISSIPPI_MARKET: MarketView = {
+  id: "0x7777777777777777777777777777777777777777",
+  question: "Will Mississippi River discharge at Baton Rouge at 12:00 UTC on Aug 16, 2026 be below 220,000 cfs?",
+  outcomes: ["Yes", "No"],
+  status: "open",
+  resolvesAt: "2026-08-16T11:00:00.000Z",
+  prices: [0.29, 0.71],
+  tradingFeePct: 0.5,
+  dataSources: [],
+};
+
+describe("USGS Baton Rouge late No forecast", () => {
+  const sourceUrl = "https://waterservices.usgs.gov/nwis/iv/";
+  const body = (
+    baseline = 244_000,
+    latest = 238_000,
+    latestAt = "2026-08-16T09:00:00.000Z",
+    site = "07374000",
+    extra: Array<{ dateTime: string; value: string; qualifiers: string[] }> = [],
+  ) => JSON.stringify({
+    value: {
+      timeSeries: [{
+        sourceInfo: { siteCode: [{ value: site, network: "NWIS", agencyCode: "USGS" }] },
+        variable: { variableCode: [{ value: "00060", network: "NWIS", vocabulary: "NWIS:UnitValues" }] },
+        values: [{ value: [
+          { dateTime: "2026-08-14T09:00:00.000Z", value: String(baseline), qualifiers: ["P"] },
+          { dateTime: latestAt, value: String(latest), qualifiers: ["P"] },
+          ...extra,
+        ] }],
+      }],
+    },
+  });
+
+  it("uses the calibrated 09:00 row while requiring the overall feed to stay fresh", () => {
+    const assessment = assessMississippiDischarge({
+      market: MISSISSIPPI_MARKET,
+      body: body(244_000, 238_000, "2026-08-16T09:00:00.000Z", "07374000", [{
+        dateTime: "2026-08-16T10:15:00.000Z",
+        value: "239000",
+        qualifiers: ["P"],
+      }]),
+      sourceUrl,
+      now: Date.parse("2026-08-16T10:20:00.000Z"),
+    });
+    expect(assessment?.probability).toBe(50 / 51);
+    expect(assessment?.rationale).toContain("238,000 cfs at 09:00 UTC");
+  });
+
+  it("fails closed when a later fresh observation leaves the calibrated regime", () => {
+    expect(assessMississippiDischarge({
+      market: MISSISSIPPI_MARKET,
+      body: body(244_000, 238_000, "2026-08-16T09:00:00.000Z", "07374000", [{
+        dateTime: "2026-08-16T10:15:00.000Z",
+        value: "228000",
+        qualifiers: ["P"],
+      }]),
+      sourceUrl,
+      now: Date.parse("2026-08-16T10:20:00.000Z"),
+    })).toBeNull();
+  });
+
+  it("selects a conservative No only in the frozen range during the final two trading hours", () => {
+    const assessment = assessMississippiDischarge({
+      market: MISSISSIPPI_MARKET,
+      body: body(),
+      sourceUrl,
+      now: Date.parse("2026-08-16T09:05:00.000Z"),
+    });
+    expect(assessment?.outcomeIndex).toBe(1);
+    expect(assessment?.evidenceClass).toBe("forecast");
+    expect(assessment?.probability).toBe(50 / 51);
+    expect(assessment?.confidence).toBe("high");
+    expect(assessment?.sources).toHaveLength(2);
+  });
+
+  it("refuses before the time gate, outside the discharge range, or during a steep decline", () => {
+    const base = { market: MISSISSIPPI_MARKET, sourceUrl };
+    expect(assessMississippiDischarge({ ...base, body: body(), now: Date.parse("2026-08-16T08:59:59.000Z") })).toBeNull();
+    expect(assessMississippiDischarge({ ...base, body: body(244_000, 229_000), now: Date.parse("2026-08-16T09:05:00.000Z") })).toBeNull();
+    expect(assessMississippiDischarge({ ...base, body: body(250_000, 235_000), now: Date.parse("2026-08-16T09:05:00.000Z") })).toBeNull();
+  });
+
+  it("refuses stale observations and a mismatched official series", () => {
+    const base = { market: MISSISSIPPI_MARKET, sourceUrl, now: Date.parse("2026-08-16T09:35:01.000Z") };
+    expect(assessMississippiDischarge({ ...base, body: body() })).toBeNull();
+    expect(assessMississippiDischarge({ ...base, body: body(244_000, 238_000, "2026-08-16T09:30:00.000Z", "wrong") })).toBeNull();
   });
 });
 
