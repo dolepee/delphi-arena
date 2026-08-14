@@ -23,6 +23,16 @@ const FEDERAL_REGISTER_CALIBRATION_URL = "https://www.federalregister.gov/api/v1
 // the fixed calibration query. Canonical fields keep the evidence reproducible
 // even if the API later changes presentation-only metadata or result ordering.
 const FEDERAL_REGISTER_CALIBRATION_HASH = "340778f74d27e93283068a0102495bc8a630c3ce78bddbf6cf998ef7c47c9943";
+const MISSISSIPPI_DISCHARGE_PATTERN = /Mississippi River discharge at Baton Rouge at 12:00 UTC on Aug 16, 2026 be below 220,000 cfs/iu;
+const MISSISSIPPI_DISCHARGE_URL = "https://waterservices.usgs.gov/nwis/iv/?format=json&sites=07374000&parameterCd=00060&period=P3D&siteStatus=all";
+const MISSISSIPPI_FORECAST_START = Date.parse("2026-08-16T09:00:00.000Z");
+const MISSISSIPPI_CALIBRATION_URL = "https://nwis.waterdata.usgs.gov/nwis/uv?cb_00060=on&format=rdb&site_no=07374000&period=&begin_date=2020-08-01&end_date=2026-08-13";
+// SHA-256 of sorted `UTC timestamp|value|qualifier` rows from the fixed
+// instantaneous-value query. At 09:00 UTC on 49 historical days the gauge was
+// between 230k and 250k cfs and its preceding two-day change was at least -5%;
+// none was below 220k at the contract-matching 12:00 UTC horizon three hours
+// later. Laplace smoothing gives P(NO)=50/51 rather than a certainty claim.
+const MISSISSIPPI_CALIBRATION_HASH = "5fa025c5d50acbeed43ee9293b0ad169073cdd964e1c2ab1657599d4219dd686";
 const TOKYO_TEMPERATURE_PATTERN = /Tokyo's highest temperature on Aug 15, 2026.*above 31\.5 °C/iu;
 const TOKYO_AMEDAS_STATION = "44132";
 const TOKYO_OBSERVATION_START = Date.parse("2026-08-14T22:00:00.000Z");
@@ -416,6 +426,101 @@ async function extractPdfText(pdfBody: Uint8Array): Promise<string> {
   }
 }
 
+export function assessMississippiDischarge(input: {
+  market: MarketView;
+  body: string;
+  sourceUrl: string;
+  now: number;
+}): Assessment | null {
+  if (
+    !MISSISSIPPI_DISCHARGE_PATTERN.test(input.market.question) ||
+    input.now < MISSISSIPPI_FORECAST_START ||
+    input.now >= Date.parse(input.market.resolvesAt ?? "1970-01-01")
+  ) return null;
+
+  let response: unknown;
+  try {
+    response = JSON.parse(input.body) as unknown;
+  } catch {
+    return null;
+  }
+  if (!response || typeof response !== "object") return null;
+  const value = (response as { value?: unknown }).value;
+  if (!value || typeof value !== "object") return null;
+  const timeSeries = (value as { timeSeries?: unknown }).timeSeries;
+  if (!Array.isArray(timeSeries) || timeSeries.length !== 1) return null;
+  const series = timeSeries[0];
+  if (!series || typeof series !== "object") return null;
+  const sourceInfo = (series as { sourceInfo?: unknown }).sourceInfo;
+  const variable = (series as { variable?: unknown }).variable;
+  const groups = (series as { values?: unknown }).values;
+  if (!sourceInfo || typeof sourceInfo !== "object" || !variable || typeof variable !== "object" || !Array.isArray(groups)) return null;
+  const siteCode = (sourceInfo as { siteCode?: unknown }).siteCode;
+  const variableCode = (variable as { variableCode?: unknown }).variableCode;
+  if (
+    !Array.isArray(siteCode) || siteCode.length !== 1 ||
+    !siteCode[0] || typeof siteCode[0] !== "object" ||
+    (siteCode[0] as { value?: unknown }).value !== "07374000" ||
+    !Array.isArray(variableCode) || variableCode.length !== 1 ||
+    !variableCode[0] || typeof variableCode[0] !== "object" ||
+    (variableCode[0] as { value?: unknown }).value !== "00060"
+  ) return null;
+
+  const observations = groups.flatMap((group) => {
+    if (!group || typeof group !== "object") return [];
+    const rows = (group as { value?: unknown }).value;
+    if (!Array.isArray(rows)) return [];
+    return rows.flatMap((row) => {
+      if (!row || typeof row !== "object") return [];
+      const dateTime = (row as { dateTime?: unknown }).dateTime;
+      const rawValue = (row as { value?: unknown }).value;
+      const qualifiers = (row as { qualifiers?: unknown }).qualifiers;
+      const timestamp = typeof dateTime === "string" ? Date.parse(dateTime) : Number.NaN;
+      const discharge = typeof rawValue === "string" ? Number(rawValue) : Number.NaN;
+      if (
+        !Number.isFinite(timestamp) || timestamp > input.now ||
+        !Number.isFinite(discharge) || discharge < 0 ||
+        !Array.isArray(qualifiers) || !qualifiers.every((entry) => entry === "P" || entry === "A")
+      ) return [];
+      return [{ timestamp, discharge }];
+    });
+  }).sort((left, right) => left.timestamp - right.timestamp);
+  const latest = observations.at(-1);
+  if (!latest || input.now - latest.timestamp > 30 * 60_000) return null;
+  const baselineTarget = latest.timestamp - 48 * 60 * 60_000;
+  const baseline = observations.filter((observation) => observation.timestamp <= baselineTarget).at(-1);
+  if (!baseline || baselineTarget - baseline.timestamp > 30 * 60_000) return null;
+  const twoDayChange = latest.discharge / baseline.discharge - 1;
+  if (latest.discharge < 230_000 || latest.discharge > 250_000 || twoDayChange < -0.05) return null;
+
+  const probability = 50 / 51;
+  const observedAt = new Date(input.now).toISOString();
+  const expiry = Math.min(input.now + 10 * 60_000, Date.parse(input.market.resolvesAt!));
+  if (expiry <= input.now) return null;
+  return {
+    marketId: input.market.id,
+    outcomeIndex: 1,
+    evidenceClass: "forecast",
+    probability,
+    confidence: "high",
+    status: "actionable",
+    observedAt,
+    expiresAt: new Date(expiry).toISOString(),
+    rationale: `The USGS Baton Rouge gauge reports ${latest.discharge.toLocaleString("en-US")} cfs with a two-day change of ${(twoDayChange * 100).toFixed(1)}%, inside the frozen comparable regime. All 49 matching historical 09:00 UTC states remained at or above 220,000 cfs at 12:00 UTC; Laplace-smoothed No probability is ${(probability * 100).toFixed(1)}%.`,
+    sources: [{
+      url: input.sourceUrl,
+      kind: "authoritative",
+      observedAt,
+      valueHash: createHash("sha256").update(input.body).digest("hex"),
+    }, {
+      url: MISSISSIPPI_CALIBRATION_URL,
+      kind: "authoritative",
+      observedAt: "2026-08-14T06:30:00.000Z",
+      valueHash: MISSISSIPPI_CALIBRATION_HASH,
+    }],
+  };
+}
+
 function utcDay(value: string): number {
   return Date.parse(`${value}T00:00:00.000Z`) / 86_400_000;
 }
@@ -573,6 +678,26 @@ export function assessCrs35Schedule(input: {
 export async function generateOfficialAssessments(markets: MarketView[], now = Date.now()): Promise<Assessment[]> {
   const assessments: Assessment[] = [];
   for (const market of markets) {
+    if (MISSISSIPPI_DISCHARGE_PATTERN.test(market.question)) {
+      try {
+        if (now < MISSISSIPPI_FORECAST_START || now >= Date.parse(market.resolvesAt ?? "1970-01-01")) continue;
+        const response = await fetch(MISSISSIPPI_DISCHARGE_URL, {
+          headers: { "user-agent": "Conviction-Delphi-Arena/1.0" },
+          signal: AbortSignal.timeout(15_000),
+        });
+        if (!response.ok) continue;
+        const assessment = assessMississippiDischarge({
+          market,
+          body: await response.text(),
+          sourceUrl: MISSISSIPPI_DISCHARGE_URL,
+          now,
+        });
+        if (assessment) assessments.push(assessment);
+      } catch {
+        continue;
+      }
+      continue;
+    }
     if (TOKYO_TEMPERATURE_PATTERN.test(market.question)) {
       try {
         if (now < TOKYO_OBSERVATION_START || now >= Date.parse(market.resolvesAt ?? "1970-01-01")) continue;
