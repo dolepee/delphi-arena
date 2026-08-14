@@ -3,6 +3,7 @@ import type { MarketView } from "../src/model.js";
 import {
   assessArcticExtent,
   assessCrs35Schedule,
+  assessFederalRegisterCount,
   assessMamdaniExecutiveOrder,
   assessSilsoSunspot,
   assessTrumpNominations,
@@ -112,6 +113,38 @@ describe("SILSO exact release assessment", () => {
     });
     expect(assessment?.outcomeIndex).toBe(1);
     expect(assessment?.probability).toBe(0.99);
+  });
+});
+
+const FEDERAL_REGISTER_MARKET: MarketView = {
+  id: "0x9999999999999999999999999999999999999999",
+  question: "Will the Federal Register publish 6+ Presidential documents with publication dates Aug 12-18, 2026?",
+  outcomes: ["Yes", "No"],
+  status: "open",
+  resolvesAt: "2026-08-18T12:00:00.000Z",
+  prices: [0.43, 0.57],
+  tradingFeePct: 0.5,
+  dataSources: [],
+};
+
+describe("Federal Register exact-count release", () => {
+  const sourceUrl = "https://www.federalregister.gov/api/v1/documents.json";
+  const now = Date.parse("2026-08-14T05:00:00.000Z");
+  const body = (count: number, description = "Documents published from 08/12/2026 to 08/18/2026 and of type Presidential Document") =>
+    JSON.stringify({ count, description });
+
+  it("selects Yes only after the official published count reaches six", () => {
+    const assessment = assessFederalRegisterCount({ market: FEDERAL_REGISTER_MARKET, body: body(6), sourceUrl, now });
+    expect(assessment?.outcomeIndex).toBe(0);
+    expect(assessment?.evidenceClass).toBe("published_result");
+    expect(assessment?.probability).toBe(0.99);
+    expect(assessment?.rationale).toContain("6 Presidential Documents");
+  });
+
+  it("refuses a forecast, malformed scope, or post-close count", () => {
+    expect(assessFederalRegisterCount({ market: FEDERAL_REGISTER_MARKET, body: body(5), sourceUrl, now })).toBeNull();
+    expect(assessFederalRegisterCount({ market: FEDERAL_REGISTER_MARKET, body: body(6, "different query"), sourceUrl, now })).toBeNull();
+    expect(assessFederalRegisterCount({ market: FEDERAL_REGISTER_MARKET, body: body(6), sourceUrl, now: Date.parse(FEDERAL_REGISTER_MARKET.resolvesAt!) })).toBeNull();
   });
 });
 
