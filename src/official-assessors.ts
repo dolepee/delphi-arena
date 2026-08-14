@@ -485,13 +485,21 @@ export function assessMississippiDischarge(input: {
       return [{ timestamp, discharge }];
     });
   }).sort((left, right) => left.timestamp - right.timestamp);
-  const latest = observations.at(-1);
-  if (!latest || input.now - latest.timestamp > 30 * 60_000) return null;
-  const baselineTarget = latest.timestamp - 48 * 60 * 60_000;
-  const baseline = observations.filter((observation) => observation.timestamp <= baselineTarget).at(-1);
-  if (!baseline || baselineTarget - baseline.timestamp > 30 * 60_000) return null;
-  const twoDayChange = latest.discharge / baseline.discharge - 1;
-  if (latest.discharge < 230_000 || latest.discharge > 250_000 || twoDayChange < -0.05) return null;
+  const sourceLatest = observations.at(-1);
+  if (!sourceLatest || input.now - sourceLatest.timestamp > 30 * 60_000) return null;
+  const observationTimestamp = Date.parse("2026-08-16T09:00:00.000Z");
+  const baselineTimestamp = observationTimestamp - 48 * 60 * 60_000;
+  const matching = observations.filter((observation) => observation.timestamp === observationTimestamp);
+  const baselines = observations.filter((observation) => observation.timestamp === baselineTimestamp);
+  if (matching.length !== 1 || baselines.length !== 1) return null;
+  const observation = matching[0]!;
+  const baseline = baselines[0]!;
+  const twoDayChange = observation.discharge / baseline.discharge - 1;
+  const postObservationChange = sourceLatest.discharge / observation.discharge - 1;
+  if (
+    observation.discharge < 230_000 || observation.discharge > 250_000 ||
+    twoDayChange < -0.05 || sourceLatest.discharge < 230_000 || postObservationChange < -0.02
+  ) return null;
 
   const probability = 50 / 51;
   const observedAt = new Date(input.now).toISOString();
@@ -506,7 +514,7 @@ export function assessMississippiDischarge(input: {
     status: "actionable",
     observedAt,
     expiresAt: new Date(expiry).toISOString(),
-    rationale: `The USGS Baton Rouge gauge reports ${latest.discharge.toLocaleString("en-US")} cfs with a two-day change of ${(twoDayChange * 100).toFixed(1)}%, inside the frozen comparable regime. All 49 matching historical 09:00 UTC states remained at or above 220,000 cfs at 12:00 UTC; Laplace-smoothed No probability is ${(probability * 100).toFixed(1)}%.`,
+    rationale: `The USGS Baton Rouge gauge reports ${observation.discharge.toLocaleString("en-US")} cfs at 09:00 UTC with a two-day change of ${(twoDayChange * 100).toFixed(1)}%, inside the frozen comparable regime. All 49 matching historical 09:00 UTC states remained at or above 220,000 cfs at 12:00 UTC; Laplace-smoothed No probability is ${(probability * 100).toFixed(1)}%.`,
     sources: [{
       url: input.sourceUrl,
       kind: "authoritative",

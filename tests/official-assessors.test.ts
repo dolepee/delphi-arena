@@ -192,7 +192,13 @@ const MISSISSIPPI_MARKET: MarketView = {
 
 describe("USGS Baton Rouge late No forecast", () => {
   const sourceUrl = "https://waterservices.usgs.gov/nwis/iv/";
-  const body = (baseline = 244_000, latest = 238_000, latestAt = "2026-08-16T09:00:00.000Z", site = "07374000") => JSON.stringify({
+  const body = (
+    baseline = 244_000,
+    latest = 238_000,
+    latestAt = "2026-08-16T09:00:00.000Z",
+    site = "07374000",
+    extra: Array<{ dateTime: string; value: string; qualifiers: string[] }> = [],
+  ) => JSON.stringify({
     value: {
       timeSeries: [{
         sourceInfo: { siteCode: [{ value: site, network: "NWIS", agencyCode: "USGS" }] },
@@ -200,9 +206,38 @@ describe("USGS Baton Rouge late No forecast", () => {
         values: [{ value: [
           { dateTime: "2026-08-14T09:00:00.000Z", value: String(baseline), qualifiers: ["P"] },
           { dateTime: latestAt, value: String(latest), qualifiers: ["P"] },
+          ...extra,
         ] }],
       }],
     },
+  });
+
+  it("uses the calibrated 09:00 row while requiring the overall feed to stay fresh", () => {
+    const assessment = assessMississippiDischarge({
+      market: MISSISSIPPI_MARKET,
+      body: body(244_000, 238_000, "2026-08-16T09:00:00.000Z", "07374000", [{
+        dateTime: "2026-08-16T10:15:00.000Z",
+        value: "239000",
+        qualifiers: ["P"],
+      }]),
+      sourceUrl,
+      now: Date.parse("2026-08-16T10:20:00.000Z"),
+    });
+    expect(assessment?.probability).toBe(50 / 51);
+    expect(assessment?.rationale).toContain("238,000 cfs at 09:00 UTC");
+  });
+
+  it("fails closed when a later fresh observation leaves the calibrated regime", () => {
+    expect(assessMississippiDischarge({
+      market: MISSISSIPPI_MARKET,
+      body: body(244_000, 238_000, "2026-08-16T09:00:00.000Z", "07374000", [{
+        dateTime: "2026-08-16T10:15:00.000Z",
+        value: "228000",
+        qualifiers: ["P"],
+      }]),
+      sourceUrl,
+      now: Date.parse("2026-08-16T10:20:00.000Z"),
+    })).toBeNull();
   });
 
   it("selects a conservative No only in the frozen range during the final two trading hours", () => {
