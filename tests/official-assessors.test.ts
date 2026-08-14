@@ -147,6 +147,35 @@ describe("Federal Register exact-count release", () => {
     expect(assessFederalRegisterCount({ market: FEDERAL_REGISTER_MARKET, body: body(6, "different query"), sourceUrl, now })).toBeNull();
     expect(assessFederalRegisterCount({ market: FEDERAL_REGISTER_MARKET, body: body(6), sourceUrl, now: Date.parse(FEDERAL_REGISTER_MARKET.resolvesAt!) })).toBeNull();
   });
+
+  it("selects a conservative No forecast only after Friday with no more than two documents", () => {
+    const assessment = assessFederalRegisterCount({
+      market: FEDERAL_REGISTER_MARKET,
+      body: body(2),
+      sourceUrl,
+      now: Date.parse("2026-08-14T21:00:00.000Z"),
+    });
+    expect(assessment?.outcomeIndex).toBe(1);
+    expect(assessment?.evidenceClass).toBe("forecast");
+    expect(assessment?.confidence).toBe("medium");
+    expect(assessment?.probability).toBe(11 / 14);
+    expect(assessment?.sources).toHaveLength(2);
+  });
+
+  it("does not forecast No before the Friday cutoff or after three to five documents", () => {
+    expect(assessFederalRegisterCount({
+      market: FEDERAL_REGISTER_MARKET,
+      body: body(2),
+      sourceUrl,
+      now: Date.parse("2026-08-14T20:59:59.000Z"),
+    })).toBeNull();
+    expect(assessFederalRegisterCount({
+      market: FEDERAL_REGISTER_MARKET,
+      body: body(3),
+      sourceUrl,
+      now: Date.parse("2026-08-14T21:00:00.000Z"),
+    })).toBeNull();
+  });
 });
 
 const TOKYO_MARKET: MarketView = {
