@@ -294,6 +294,20 @@ describe("White House/Senate nominations forecast", () => {
     expect(assessTrumpNominations({ ...base, feedBody: nominationsFeed(), congressBody: JSON.stringify({ nominations: [{ receivedDate: "2026-08-14" }], pagination: { count: 1 } }) })).toBeNull();
   });
 
+  it("ignores an older nomination updated in-window but refuses a late-ingested in-window receipt", () => {
+    expect(assessTrumpNominations({
+      ...base,
+      feedBody: nominationsFeed(),
+      congressBody: JSON.stringify({ nominations: [{ receivedDate: "2026-07-21" }], pagination: { count: 1 } }),
+    })).not.toBeNull();
+    expect(assessTrumpNominations({
+      ...base,
+      feedBody: nominationsFeed(),
+      congressBody: JSON.stringify({ nominations: [{ receivedDate: "2026-08-15" }], pagination: { count: 1 } }),
+      now: Date.parse("2026-08-16T12:00:00.000Z"),
+    })).toBeNull();
+  });
+
   it("pauses for ingestion after the window, then promotes the official absence to a published result", () => {
     expect(assessTrumpNominations({
       ...base,

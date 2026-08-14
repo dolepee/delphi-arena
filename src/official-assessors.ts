@@ -11,7 +11,7 @@ const NYC_EXECUTIVE_ORDER_SEARCH_URL = "https://www.nyc.gov/bin/nyc/articlesearc
 const NYC_EXECUTIVE_ORDER_DATE_PATTERN = /August (?:9|10|11|12|13|14|15), 2026/u;
 const TRUMP_NOMINATIONS_PATTERN = /Trump send at least 5 nominations to the US Senate during Aug 9-15, 2026/iu;
 const WHITE_HOUSE_NOMINATIONS_FEED_URL = "https://www.whitehouse.gov/presidential-actions/nominations-appointments/feed/";
-const CONGRESS_NOMINATIONS_WINDOW_URL = "https://api.congress.gov/v3/nomination/119?fromDateTime=2026-08-09T00%3A00%3A00Z&toDateTime=2026-08-15T23%3A59%3A59Z&limit=250&format=json&api_key=DEMO_KEY";
+const CONGRESS_NOMINATIONS_WINDOW_URL = "https://api.congress.gov/v3/nomination/119?fromDateTime=2026-08-09T00%3A00%3A00Z&limit=250&format=json&api_key=DEMO_KEY";
 const NOMINATIONS_WINDOW_START = Date.parse("2026-08-09T00:00:00.000Z");
 const NOMINATIONS_WINDOW_END = Date.parse("2026-08-16T00:00:00.000Z");
 const NOMINATIONS_FORECAST_START = Date.parse("2026-08-14T00:00:00.000Z");
@@ -88,7 +88,21 @@ export function assessTrumpNominations(input: {
   } catch {
     return null;
   }
-  if (!Array.isArray(congress.nominations) || congress.nominations.length !== 0 || congress.pagination?.count !== 0) return null;
+  if (
+    !Array.isArray(congress.nominations) ||
+    typeof congress.pagination?.count !== "number" ||
+    congress.pagination.count !== congress.nominations.length ||
+    congress.pagination.count > 250
+  ) return null;
+  const receivedDates = congress.nominations.map((nomination) => {
+    if (!nomination || typeof nomination !== "object") return null;
+    const receivedDate = (nomination as { receivedDate?: unknown }).receivedDate;
+    return typeof receivedDate === "string" && /^\d{4}-\d{2}-\d{2}$/u.test(receivedDate)
+      ? Date.parse(`${receivedDate}T00:00:00.000Z`)
+      : null;
+  });
+  if (receivedDates.some((receivedAt) => receivedAt === null)) return null;
+  if (receivedDates.some((receivedAt) => receivedAt! >= NOMINATIONS_WINDOW_START && receivedAt! < NOMINATIONS_WINDOW_END)) return null;
 
   const historical = items.filter((item) => item.publishedAt < NOMINATIONS_WINDOW_START);
   const earliest = historical.at(0)?.publishedAt;
@@ -123,8 +137,8 @@ export function assessTrumpNominations(input: {
     observedAt,
     expiresAt: new Date(expiry).toISOString(),
     rationale: resultKnown
-      ? "The Aug 9-15 received-date window closed 12 hours ago. The White House official feed has no in-window transmission and Congress.gov still reports zero nomination records updated in the entire contract window."
-      : `The White House feed has no nomination transmission after Aug 7 and Congress.gov reports zero nomination records updated in the Aug 9-15 window. Only Friday/Saturday remain; ${activeWindows} of ${windows} historical Friday/Saturday windows in the official feed contained any nomination release, giving a conservative Laplace-smoothed No probability of ${(probability * 100).toFixed(1)}%.`,
+      ? "The Aug 9-15 received-date window closed 12 hours ago. The White House official feed has no in-window transmission and the current Congress.gov update set contains no nomination with an in-window receivedDate."
+      : `The White House feed has no nomination transmission after Aug 7 and the current Congress.gov update set contains no nomination received in the Aug 9-15 window. Only Friday/Saturday remain; ${activeWindows} of ${windows} historical Friday/Saturday windows in the official feed contained any nomination release, giving a conservative Laplace-smoothed No probability of ${(probability * 100).toFixed(1)}%.`,
     sources: [{
       url: input.feedUrl,
       kind: "authoritative",
