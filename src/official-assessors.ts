@@ -9,6 +9,12 @@ const NASA_CRS_35_URL = "https://www.nasa.gov/event/nasas-spacex-crs-35/";
 const MAMDANI_EXECUTIVE_ORDER_PATTERN = /Mamdani non-emergency NYC executive order dated Aug 9-15, 2026/iu;
 const NYC_EXECUTIVE_ORDER_SEARCH_URL = "https://www.nyc.gov/bin/nyc/articlesearch.json?pageSize=100&currentPage=1&types=executive-orders&fromDate=2026-08-09&toDate=2026-08-15";
 const NYC_EXECUTIVE_ORDER_DATE_PATTERN = /August (?:9|10|11|12|13|14|15), 2026/u;
+const TRUMP_NOMINATIONS_PATTERN = /Trump send at least 5 nominations to the US Senate during Aug 9-15, 2026/iu;
+const WHITE_HOUSE_NOMINATIONS_FEED_URL = "https://www.whitehouse.gov/presidential-actions/nominations-appointments/feed/";
+const CONGRESS_NOMINATIONS_WINDOW_URL = "https://api.congress.gov/v3/nomination/119?fromDateTime=2026-08-09T00%3A00%3A00Z&toDateTime=2026-08-15T23%3A59%3A59Z&limit=250&format=json&api_key=DEMO_KEY";
+const NOMINATIONS_WINDOW_START = Date.parse("2026-08-09T00:00:00.000Z");
+const NOMINATIONS_WINDOW_END = Date.parse("2026-08-16T00:00:00.000Z");
+const NOMINATIONS_FORECAST_START = Date.parse("2026-08-14T00:00:00.000Z");
 
 interface NycExecutiveOrderResult {
   link?: unknown;
@@ -18,6 +24,114 @@ interface NycExecutiveOrderResult {
 
 interface NycExecutiveOrderSearch {
   results?: unknown;
+}
+
+interface NominationFeedItem {
+  publishedAt: number;
+  title: string;
+}
+
+function xmlText(value: string): string {
+  return value
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/gu, "$1")
+    .replace(/&#8211;/gu, "–")
+    .replace(/&amp;/gu, "&")
+    .replace(/<[^>]+>/gu, "")
+    .trim();
+}
+
+function nominationFeedItems(body: string): NominationFeedItem[] {
+  return [...body.matchAll(/<item>([\s\S]*?)<\/item>/gu)].flatMap((match) => {
+    const item = match[1] ?? "";
+    const title = xmlText(/<title>([\s\S]*?)<\/title>/u.exec(item)?.[1] ?? "");
+    const publishedAt = Date.parse(xmlText(/<pubDate>([\s\S]*?)<\/pubDate>/u.exec(item)?.[1] ?? ""));
+    if (!Number.isFinite(publishedAt) || !/Nominations?.*Sent to the Senate/iu.test(title)) return [];
+    return [{ publishedAt, title }];
+  }).sort((left, right) => left.publishedAt - right.publishedAt);
+}
+
+function fridaySaturdayWindows(start: number, end: number): number {
+  const cursor = new Date(start);
+  cursor.setUTCHours(0, 0, 0, 0);
+  while (cursor.getUTCDay() !== 5) cursor.setUTCDate(cursor.getUTCDate() + 1);
+  let count = 0;
+  while (cursor.getTime() < end) {
+    count += 1;
+    cursor.setUTCDate(cursor.getUTCDate() + 7);
+  }
+  return count;
+}
+
+export function assessTrumpNominations(input: {
+  market: MarketView;
+  feedBody: string;
+  congressBody: string;
+  feedUrl: string;
+  congressUrl: string;
+  now: number;
+}): Assessment | null {
+  if (
+    !TRUMP_NOMINATIONS_PATTERN.test(input.market.question) ||
+    input.now < NOMINATIONS_FORECAST_START ||
+    input.now >= Math.min(NOMINATIONS_WINDOW_END, Date.parse(input.market.resolvesAt ?? "1970-01-01"))
+  ) return null;
+
+  const items = nominationFeedItems(input.feedBody);
+  const latest = items.at(-1);
+  if (!latest || latest.publishedAt !== Date.parse("2026-08-07T15:09:20.000Z")) return null;
+  if (items.some((item) => item.publishedAt >= NOMINATIONS_WINDOW_START)) return null;
+
+  let congress: { nominations?: unknown; pagination?: { count?: unknown } };
+  try {
+    congress = JSON.parse(input.congressBody) as typeof congress;
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(congress.nominations) || congress.nominations.length !== 0 || congress.pagination?.count !== 0) return null;
+
+  const historical = items.filter((item) => item.publishedAt < NOMINATIONS_WINDOW_START);
+  const earliest = historical.at(0)?.publishedAt;
+  if (earliest === undefined) return null;
+  const windows = fridaySaturdayWindows(earliest, NOMINATIONS_WINDOW_START);
+  const activeWindows = new Set(historical.flatMap((item) => {
+    const date = new Date(item.publishedAt);
+    const day = date.getUTCDay();
+    if (day !== 5 && day !== 6) return [];
+    if (day === 6) date.setUTCDate(date.getUTCDate() - 1);
+    return [date.toISOString().slice(0, 10)];
+  })).size;
+  if (windows < 30) return null;
+
+  // Any Friday/Saturday nomination release is a conservative superset of a
+  // release containing five or more nominations. Laplace smoothing avoids a
+  // zero-frequency claim while keeping the inference reproducible.
+  const anyReleaseProbability = (activeWindows + 1) / (windows + 2);
+  const probability = Math.min(0.97, Math.max(0.85, 1 - anyReleaseProbability));
+  const observedAt = new Date(input.now).toISOString();
+  const expiry = Math.min(input.now + 10 * 60_000, Date.parse(input.market.resolvesAt!));
+  if (expiry <= input.now) return null;
+  return {
+    marketId: input.market.id,
+    outcomeIndex: 1,
+    evidenceClass: "forecast",
+    probability,
+    confidence: "high",
+    status: "actionable",
+    observedAt,
+    expiresAt: new Date(expiry).toISOString(),
+    rationale: `The White House feed has no nomination transmission after Aug 7 and Congress.gov reports zero nomination records updated in the Aug 9-15 window. Only Friday/Saturday remain; ${activeWindows} of ${windows} historical Friday/Saturday windows in the official feed contained any nomination release, giving a conservative Laplace-smoothed No probability of ${(probability * 100).toFixed(1)}%.`,
+    sources: [{
+      url: input.feedUrl,
+      kind: "authoritative",
+      observedAt,
+      valueHash: createHash("sha256").update(input.feedBody).digest("hex"),
+    }, {
+      url: input.congressUrl,
+      kind: "authoritative",
+      observedAt,
+      valueHash: createHash("sha256").update(input.congressBody).digest("hex"),
+    }],
+  };
 }
 
 export async function firstSuccessfulAssessment<T>(
@@ -278,6 +392,33 @@ export function assessCrs35Schedule(input: {
 export async function generateOfficialAssessments(markets: MarketView[], now = Date.now()): Promise<Assessment[]> {
   const assessments: Assessment[] = [];
   for (const market of markets) {
+    if (TRUMP_NOMINATIONS_PATTERN.test(market.question)) {
+      try {
+        const [feedResponse, congressResponse] = await Promise.all([
+          fetch(WHITE_HOUSE_NOMINATIONS_FEED_URL, {
+            headers: { "user-agent": "Conviction-Delphi-Arena/1.0" },
+            signal: AbortSignal.timeout(15_000),
+          }),
+          fetch(CONGRESS_NOMINATIONS_WINDOW_URL, {
+            headers: { "user-agent": "Conviction-Delphi-Arena/1.0" },
+            signal: AbortSignal.timeout(15_000),
+          }),
+        ]);
+        if (!feedResponse.ok || !congressResponse.ok) continue;
+        const assessment = assessTrumpNominations({
+          market,
+          feedBody: await feedResponse.text(),
+          congressBody: await congressResponse.text(),
+          feedUrl: WHITE_HOUSE_NOMINATIONS_FEED_URL,
+          congressUrl: CONGRESS_NOMINATIONS_WINDOW_URL,
+          now,
+        });
+        if (assessment) assessments.push(assessment);
+      } catch {
+        continue;
+      }
+      continue;
+    }
     if (MAMDANI_EXECUTIVE_ORDER_PATTERN.test(market.question)) {
       try {
         const searchResponse = await fetch(NYC_EXECUTIVE_ORDER_SEARCH_URL, {

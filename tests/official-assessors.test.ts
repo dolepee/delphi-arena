@@ -5,6 +5,7 @@ import {
   assessCrs35Schedule,
   assessMamdaniExecutiveOrder,
   assessSilsoSunspot,
+  assessTrumpNominations,
   firstSuccessfulAssessment,
   generateOfficialAssessments,
 } from "../src/official-assessors.js";
@@ -241,5 +242,55 @@ describe("official-result fault isolation", () => {
       return expected;
     });
     expect(assessment).toBe(expected);
+  });
+});
+
+const NOMINATIONS_MARKET: MarketView = {
+  id: "0x5555555555555555555555555555555555555555",
+  question: "Will Trump send at least 5 nominations to the US Senate during Aug 9-15, 2026?",
+  outcomes: ["Yes", "No"],
+  status: "open",
+  resolvesAt: "2026-08-16T14:00:00.000Z",
+  prices: [0.26, 0.74],
+  tradingFeePct: 0.5,
+  dataSources: [],
+};
+
+function nominationsFeed(extra = ""): string {
+  const items: string[] = [];
+  const start = Date.parse("2025-04-01T15:00:00.000Z");
+  for (let index = 0; index < 70; index += 1) {
+    const date = new Date(start + index * 7 * 86_400_000);
+    items.push(`<item><title>Nominations Sent to the Senate</title><pubDate>${date.toUTCString()}</pubDate></item>`);
+  }
+  items.push('<item><title>Nominations Sent to the Senate</title><pubDate>Fri, 07 Aug 2026 15:09:20 +0000</pubDate></item>');
+  return `<rss><channel>${items.join("")}${extra}</channel></rss>`;
+}
+
+describe("White House/Senate nominations forecast", () => {
+  const base = {
+    market: NOMINATIONS_MARKET,
+    congressBody: JSON.stringify({ nominations: [], pagination: { count: 0 } }),
+    feedUrl: "https://www.whitehouse.gov/feed/",
+    congressUrl: "https://api.congress.gov/v3/nomination/119",
+    now: Date.parse("2026-08-14T05:00:00.000Z"),
+  };
+
+  it("selects No only after two official sources confirm no in-window receipt", () => {
+    const assessment = assessTrumpNominations({ ...base, feedBody: nominationsFeed() });
+    expect(assessment?.outcomeIndex).toBe(1);
+    expect(assessment?.evidenceClass).toBe("forecast");
+    expect(assessment?.probability).toBeGreaterThan(0.9);
+    expect(assessment?.sources).toHaveLength(2);
+  });
+
+  it("refuses a new in-window White House release", () => {
+    const extra = '<item><title>Nominations Sent to the Senate</title><pubDate>Fri, 14 Aug 2026 15:00:00 +0000</pubDate></item>';
+    expect(assessTrumpNominations({ ...base, feedBody: nominationsFeed(extra) })).toBeNull();
+  });
+
+  it("refuses before the final Friday/Saturday window and on mismatched Congress evidence", () => {
+    expect(assessTrumpNominations({ ...base, feedBody: nominationsFeed(), now: Date.parse("2026-08-13T23:59:59.000Z") })).toBeNull();
+    expect(assessTrumpNominations({ ...base, feedBody: nominationsFeed(), congressBody: JSON.stringify({ nominations: [{ receivedDate: "2026-08-14" }], pagination: { count: 1 } }) })).toBeNull();
   });
 });
