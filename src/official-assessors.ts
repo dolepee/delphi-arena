@@ -16,6 +16,8 @@ const NOMINATIONS_WINDOW_START = Date.parse("2026-08-09T00:00:00.000Z");
 const NOMINATIONS_WINDOW_END = Date.parse("2026-08-16T00:00:00.000Z");
 const NOMINATIONS_FORECAST_START = Date.parse("2026-08-14T00:00:00.000Z");
 const NOMINATIONS_RESULT_START = Date.parse("2026-08-16T12:00:00.000Z");
+const FEDERAL_REGISTER_PATTERN = /Federal Register publish 6\+ Presidential documents with publication dates Aug 12-18, 2026/iu;
+const FEDERAL_REGISTER_URL = "https://www.federalregister.gov/api/v1/documents.json?conditions%5Btype%5D%5B%5D=PRESDOCU&conditions%5Bpublication_date%5D%5Bgte%5D=2026-08-12&conditions%5Bpublication_date%5D%5Blte%5D=2026-08-18&per_page=1";
 
 interface NycExecutiveOrderResult {
   link?: unknown;
@@ -149,6 +151,52 @@ export function assessTrumpNominations(input: {
       kind: "authoritative",
       observedAt,
       valueHash: createHash("sha256").update(input.congressBody).digest("hex"),
+    }],
+  };
+}
+
+export function assessFederalRegisterCount(input: {
+  market: MarketView;
+  body: string;
+  sourceUrl: string;
+  now: number;
+}): Assessment | null {
+  if (
+    !FEDERAL_REGISTER_PATTERN.test(input.market.question) ||
+    input.now >= Date.parse(input.market.resolvesAt ?? "1970-01-01")
+  ) return null;
+
+  let response: { count?: unknown; description?: unknown };
+  try {
+    response = JSON.parse(input.body) as typeof response;
+  } catch {
+    return null;
+  }
+  if (
+    !Number.isInteger(response.count) ||
+    (response.count as number) < 6 ||
+    typeof response.description !== "string" ||
+    !/Documents published from 08\/12\/2026 to 08\/18\/2026 and of type Presidential Document/u.test(response.description)
+  ) return null;
+
+  const observedAt = new Date(input.now).toISOString();
+  const expiry = Math.min(input.now + 10 * 60_000, Date.parse(input.market.resolvesAt!));
+  if (expiry <= input.now) return null;
+  return {
+    marketId: input.market.id,
+    outcomeIndex: 0,
+    evidenceClass: "published_result",
+    probability: 0.99,
+    confidence: "high",
+    status: "actionable",
+    observedAt,
+    expiresAt: new Date(expiry).toISOString(),
+    rationale: `The Federal Register official API already contains ${response.count as number} Presidential Documents with publication dates in the contract window, meeting the threshold before trading closes.`,
+    sources: [{
+      url: input.sourceUrl,
+      kind: "authoritative",
+      observedAt,
+      valueHash: createHash("sha256").update(input.body).digest("hex"),
     }],
   };
 }
@@ -411,6 +459,25 @@ export function assessCrs35Schedule(input: {
 export async function generateOfficialAssessments(markets: MarketView[], now = Date.now()): Promise<Assessment[]> {
   const assessments: Assessment[] = [];
   for (const market of markets) {
+    if (FEDERAL_REGISTER_PATTERN.test(market.question)) {
+      try {
+        const response = await fetch(FEDERAL_REGISTER_URL, {
+          headers: { "user-agent": "Conviction-Delphi-Arena/1.0" },
+          signal: AbortSignal.timeout(15_000),
+        });
+        if (!response.ok) continue;
+        const assessment = assessFederalRegisterCount({
+          market,
+          body: await response.text(),
+          sourceUrl: FEDERAL_REGISTER_URL,
+          now,
+        });
+        if (assessment) assessments.push(assessment);
+      } catch {
+        continue;
+      }
+      continue;
+    }
     if (TRUMP_NOMINATIONS_PATTERN.test(market.question)) {
       try {
         const [feedResponse, congressResponse] = await Promise.all([
