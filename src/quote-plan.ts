@@ -47,5 +47,6 @@ export async function findQuotedPlan(input: {
       high = shares - 0.01;
     }
   }
+  if (best && input.mode === "full" && best.quotedCostTst < input.policy.minimumFullOrderTst) return null;
   return best;
 }
