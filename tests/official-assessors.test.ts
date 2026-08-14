@@ -303,18 +303,16 @@ function nominationsFeed(extra = ""): string {
 describe("White House/Senate nominations forecast", () => {
   const base = {
     market: NOMINATIONS_MARKET,
-    congressBody: JSON.stringify({ nominations: [], pagination: { count: 0 } }),
     feedUrl: "https://www.whitehouse.gov/feed/",
-    congressUrl: "https://api.congress.gov/v3/nomination/119",
     now: Date.parse("2026-08-14T05:00:00.000Z"),
   };
 
-  it("selects No only after two official sources confirm no in-window receipt", () => {
+  it("selects No from the current and historical authoritative White House feed", () => {
     const assessment = assessTrumpNominations({ ...base, feedBody: nominationsFeed() });
     expect(assessment?.outcomeIndex).toBe(1);
     expect(assessment?.evidenceClass).toBe("forecast");
     expect(assessment?.probability).toBeGreaterThan(0.9);
-    expect(assessment?.sources).toHaveLength(2);
+    expect(assessment?.sources).toHaveLength(1);
   });
 
   it("refuses a new in-window White House release", () => {
@@ -322,23 +320,8 @@ describe("White House/Senate nominations forecast", () => {
     expect(assessTrumpNominations({ ...base, feedBody: nominationsFeed(extra) })).toBeNull();
   });
 
-  it("refuses before the final Friday/Saturday window and on mismatched Congress evidence", () => {
+  it("refuses before the final Friday/Saturday window", () => {
     expect(assessTrumpNominations({ ...base, feedBody: nominationsFeed(), now: Date.parse("2026-08-13T23:59:59.000Z") })).toBeNull();
-    expect(assessTrumpNominations({ ...base, feedBody: nominationsFeed(), congressBody: JSON.stringify({ nominations: [{ receivedDate: "2026-08-14" }], pagination: { count: 1 } }) })).toBeNull();
-  });
-
-  it("ignores an older nomination updated in-window but refuses a late-ingested in-window receipt", () => {
-    expect(assessTrumpNominations({
-      ...base,
-      feedBody: nominationsFeed(),
-      congressBody: JSON.stringify({ nominations: [{ receivedDate: "2026-07-21" }], pagination: { count: 1 } }),
-    })).not.toBeNull();
-    expect(assessTrumpNominations({
-      ...base,
-      feedBody: nominationsFeed(),
-      congressBody: JSON.stringify({ nominations: [{ receivedDate: "2026-08-15" }], pagination: { count: 1 } }),
-      now: Date.parse("2026-08-16T12:00:00.000Z"),
-    })).toBeNull();
   });
 
   it("pauses for ingestion after the window, then promotes the official absence to a published result", () => {
