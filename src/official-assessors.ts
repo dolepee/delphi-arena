@@ -18,11 +18,11 @@ const NOMINATIONS_RESULT_START = Date.parse("2026-08-16T12:00:00.000Z");
 const FEDERAL_REGISTER_PATTERN = /Federal Register publish 6\+ Presidential documents with publication dates Aug 12-18, 2026/iu;
 const FEDERAL_REGISTER_URL = "https://www.federalregister.gov/api/v1/documents.json?conditions%5Btype%5D%5B%5D=PRESDOCU&conditions%5Bpublication_date%5D%5Bgte%5D=2026-08-12&conditions%5Bpublication_date%5D%5Blte%5D=2026-08-18&per_page=1";
 const FEDERAL_REGISTER_NO_FORECAST_START = Date.parse("2026-08-14T21:00:00.000Z");
-const FEDERAL_REGISTER_CALIBRATION_URL = "https://www.federalregister.gov/api/v1/documents.json?conditions%5Btype%5D%5B%5D=PRESDOCU&conditions%5Bpublication_date%5D%5Bgte%5D=2025-10-01&conditions%5Bpublication_date%5D%5Blte%5D=2026-08-11&per_page=1000&order=newest";
+const FEDERAL_REGISTER_CALIBRATION_URL = "https://www.federalregister.gov/api/v1/documents.json?conditions%5Btype%5D%5B%5D=PRESDOCU&conditions%5Bpublication_date%5D%5Bgte%5D=2025-11-05&conditions%5Bpublication_date%5D%5Blte%5D=2026-08-11&per_page=1000&order=newest";
 // SHA-256 of the sorted `document_number|publication_date` rows returned by
 // the fixed calibration query. Canonical fields keep the evidence reproducible
 // even if the API later changes presentation-only metadata or result ordering.
-const FEDERAL_REGISTER_CALIBRATION_HASH = "4a1de63e43ae0884135ee8bf96b5f45a093f9c6fcb50a8f93e4165d19640bc78";
+const FEDERAL_REGISTER_CALIBRATION_HASH = "340778f74d27e93283068a0102495bc8a630c3ce78bddbf6cf998ef7c47c9943";
 const TOKYO_TEMPERATURE_PATTERN = /Tokyo's highest temperature on Aug 15, 2026.*above 31\.5 °C/iu;
 const TOKYO_AMEDAS_STATION = "44132";
 const TOKYO_OBSERVATION_START = Date.parse("2026-08-14T22:00:00.000Z");
