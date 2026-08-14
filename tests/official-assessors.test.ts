@@ -6,6 +6,7 @@ import {
   assessFederalRegisterCount,
   assessMamdaniExecutiveOrder,
   assessSilsoSunspot,
+  assessTokyoObservedTemperature,
   assessTrumpNominations,
   firstSuccessfulAssessment,
   generateOfficialAssessments,
@@ -145,6 +146,40 @@ describe("Federal Register exact-count release", () => {
     expect(assessFederalRegisterCount({ market: FEDERAL_REGISTER_MARKET, body: body(5), sourceUrl, now })).toBeNull();
     expect(assessFederalRegisterCount({ market: FEDERAL_REGISTER_MARKET, body: body(6, "different query"), sourceUrl, now })).toBeNull();
     expect(assessFederalRegisterCount({ market: FEDERAL_REGISTER_MARKET, body: body(6), sourceUrl, now: Date.parse(FEDERAL_REGISTER_MARKET.resolvesAt!) })).toBeNull();
+  });
+});
+
+const TOKYO_MARKET: MarketView = {
+  id: "0x8888888888888888888888888888888888888888",
+  question: "Will Tokyo's highest temperature on Aug 15, 2026 (Japan Standard Time) be above 31.5 °C?",
+  outcomes: ["Yes", "No"],
+  status: "open",
+  resolvesAt: "2026-08-15T04:00:00.000Z",
+  prices: [0.27, 0.73],
+  tradingFeePct: 0.5,
+  dataSources: [],
+};
+
+describe("JMA Tokyo irreversible temperature crossing", () => {
+  const now = Date.parse("2026-08-15T02:12:00.000Z");
+  const sourceObservedAt = Date.parse("2026-08-15T02:00:00.000Z");
+  const sourceUrl = "https://www.jma.go.jp/bosai/amedas/data/map/20260815020000.json";
+  const body = (temperature: number, quality = 0) => JSON.stringify({ "44132": { temp: [temperature, quality] } });
+
+  it("selects Yes after a quality-zero Tokyo reading crosses 31.5 °C", () => {
+    const assessment = assessTokyoObservedTemperature({ market: TOKYO_MARKET, body: body(31.6), sourceUrl, sourceObservedAt, now });
+    expect(assessment?.outcomeIndex).toBe(0);
+    expect(assessment?.evidenceClass).toBe("published_result");
+    expect(assessment?.probability).toBe(0.99);
+    expect(assessment?.rationale).toContain("31.6 °C");
+  });
+
+  it("refuses a non-crossing, suspect, stale, pre-window, or post-close reading", () => {
+    expect(assessTokyoObservedTemperature({ market: TOKYO_MARKET, body: body(31.5), sourceUrl, sourceObservedAt, now })).toBeNull();
+    expect(assessTokyoObservedTemperature({ market: TOKYO_MARKET, body: body(32, 1), sourceUrl, sourceObservedAt, now })).toBeNull();
+    expect(assessTokyoObservedTemperature({ market: TOKYO_MARKET, body: body(32), sourceUrl, sourceObservedAt: now - 21 * 60_000, now })).toBeNull();
+    expect(assessTokyoObservedTemperature({ market: TOKYO_MARKET, body: body(32), sourceUrl, sourceObservedAt: Date.parse("2026-08-14T21:50:00.000Z"), now: Date.parse("2026-08-14T21:59:00.000Z") })).toBeNull();
+    expect(assessTokyoObservedTemperature({ market: TOKYO_MARKET, body: body(32), sourceUrl, sourceObservedAt, now: Date.parse(TOKYO_MARKET.resolvesAt!) })).toBeNull();
   });
 });
 

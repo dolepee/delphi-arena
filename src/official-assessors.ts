@@ -17,6 +17,9 @@ const NOMINATIONS_FORECAST_START = Date.parse("2026-08-14T00:00:00.000Z");
 const NOMINATIONS_RESULT_START = Date.parse("2026-08-16T12:00:00.000Z");
 const FEDERAL_REGISTER_PATTERN = /Federal Register publish 6\+ Presidential documents with publication dates Aug 12-18, 2026/iu;
 const FEDERAL_REGISTER_URL = "https://www.federalregister.gov/api/v1/documents.json?conditions%5Btype%5D%5B%5D=PRESDOCU&conditions%5Bpublication_date%5D%5Bgte%5D=2026-08-12&conditions%5Bpublication_date%5D%5Blte%5D=2026-08-18&per_page=1";
+const TOKYO_TEMPERATURE_PATTERN = /Tokyo's highest temperature on Aug 15, 2026.*above 31\.5 °C/iu;
+const TOKYO_AMEDAS_STATION = "44132";
+const TOKYO_OBSERVATION_START = Date.parse("2026-08-14T22:00:00.000Z");
 
 interface NycExecutiveOrderResult {
   link?: unknown;
@@ -166,6 +169,63 @@ export function assessFederalRegisterCount(input: {
       url: input.sourceUrl,
       kind: "authoritative",
       observedAt,
+      valueHash: createHash("sha256").update(input.body).digest("hex"),
+    }],
+  };
+}
+
+export function assessTokyoObservedTemperature(input: {
+  market: MarketView;
+  body: string;
+  sourceUrl: string;
+  sourceObservedAt: number;
+  now: number;
+}): Assessment | null {
+  const closeAt = Date.parse(input.market.resolvesAt ?? "1970-01-01");
+  if (
+    !TOKYO_TEMPERATURE_PATTERN.test(input.market.question) ||
+    input.now < TOKYO_OBSERVATION_START ||
+    input.now >= closeAt ||
+    input.sourceObservedAt < TOKYO_OBSERVATION_START ||
+    input.sourceObservedAt > input.now ||
+    input.now - input.sourceObservedAt > 20 * 60_000
+  ) return null;
+
+  let map: Record<string, unknown>;
+  try {
+    map = JSON.parse(input.body) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  const station = map[TOKYO_AMEDAS_STATION];
+  if (!station || typeof station !== "object") return null;
+  const temp = (station as { temp?: unknown }).temp;
+  if (
+    !Array.isArray(temp) ||
+    temp.length !== 2 ||
+    typeof temp[0] !== "number" ||
+    !Number.isFinite(temp[0]) ||
+    temp[1] !== 0 ||
+    temp[0] <= 31.5
+  ) return null;
+
+  const observedAt = new Date(input.now).toISOString();
+  const expiry = Math.min(input.now + 10 * 60_000, closeAt);
+  if (expiry <= input.now) return null;
+  return {
+    marketId: input.market.id,
+    outcomeIndex: 0,
+    evidenceClass: "published_result",
+    probability: 0.99,
+    confidence: "high",
+    status: "actionable",
+    observedAt,
+    expiresAt: new Date(expiry).toISOString(),
+    rationale: `JMA's official AMeDAS observation for Tokyo station ${TOKYO_AMEDAS_STATION} reports ${temp[0]} °C on Aug 15 JST. Crossing 31.5 °C makes the contract's daily-high YES condition irreversible before trading closes.`,
+    sources: [{
+      url: input.sourceUrl,
+      kind: "authoritative",
+      observedAt: new Date(input.sourceObservedAt).toISOString(),
       valueHash: createHash("sha256").update(input.body).digest("hex"),
     }],
   };
@@ -429,6 +489,30 @@ export function assessCrs35Schedule(input: {
 export async function generateOfficialAssessments(markets: MarketView[], now = Date.now()): Promise<Assessment[]> {
   const assessments: Assessment[] = [];
   for (const market of markets) {
+    if (TOKYO_TEMPERATURE_PATTERN.test(market.question)) {
+      try {
+        if (now < TOKYO_OBSERVATION_START || now >= Date.parse(market.resolvesAt ?? "1970-01-01")) continue;
+        const sourceObservedAt = Math.floor((now - 10 * 60_000) / (10 * 60_000)) * 10 * 60_000;
+        const stamp = new Date(sourceObservedAt).toISOString().replace(/[-:T]/gu, "").slice(0, 14);
+        const sourceUrl = `https://www.jma.go.jp/bosai/amedas/data/map/${stamp}.json`;
+        const response = await fetch(sourceUrl, {
+          headers: { "user-agent": "Conviction-Delphi-Arena/1.0" },
+          signal: AbortSignal.timeout(15_000),
+        });
+        if (!response.ok) continue;
+        const assessment = assessTokyoObservedTemperature({
+          market,
+          body: await response.text(),
+          sourceUrl,
+          sourceObservedAt,
+          now,
+        });
+        if (assessment) assessments.push(assessment);
+      } catch {
+        continue;
+      }
+      continue;
+    }
     if (FEDERAL_REGISTER_PATTERN.test(market.question)) {
       try {
         const response = await fetch(FEDERAL_REGISTER_URL, {
