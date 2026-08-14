@@ -15,6 +15,7 @@ const CONGRESS_NOMINATIONS_WINDOW_URL = "https://api.congress.gov/v3/nomination/
 const NOMINATIONS_WINDOW_START = Date.parse("2026-08-09T00:00:00.000Z");
 const NOMINATIONS_WINDOW_END = Date.parse("2026-08-16T00:00:00.000Z");
 const NOMINATIONS_FORECAST_START = Date.parse("2026-08-14T00:00:00.000Z");
+const NOMINATIONS_RESULT_START = Date.parse("2026-08-16T12:00:00.000Z");
 
 interface NycExecutiveOrderResult {
   link?: unknown;
@@ -73,7 +74,7 @@ export function assessTrumpNominations(input: {
   if (
     !TRUMP_NOMINATIONS_PATTERN.test(input.market.question) ||
     input.now < NOMINATIONS_FORECAST_START ||
-    input.now >= Math.min(NOMINATIONS_WINDOW_END, Date.parse(input.market.resolvesAt ?? "1970-01-01"))
+    input.now >= Date.parse(input.market.resolvesAt ?? "1970-01-01")
   ) return null;
 
   const items = nominationFeedItems(input.feedBody);
@@ -106,20 +107,24 @@ export function assessTrumpNominations(input: {
   // release containing five or more nominations. Laplace smoothing avoids a
   // zero-frequency claim while keeping the inference reproducible.
   const anyReleaseProbability = (activeWindows + 1) / (windows + 2);
-  const probability = Math.min(0.97, Math.max(0.85, 1 - anyReleaseProbability));
+  const resultKnown = input.now >= NOMINATIONS_RESULT_START;
+  if (input.now >= NOMINATIONS_WINDOW_END && !resultKnown) return null;
+  const probability = resultKnown ? 0.99 : Math.min(0.97, Math.max(0.85, 1 - anyReleaseProbability));
   const observedAt = new Date(input.now).toISOString();
   const expiry = Math.min(input.now + 10 * 60_000, Date.parse(input.market.resolvesAt!));
   if (expiry <= input.now) return null;
   return {
     marketId: input.market.id,
     outcomeIndex: 1,
-    evidenceClass: "forecast",
+    evidenceClass: resultKnown ? "published_result" : "forecast",
     probability,
     confidence: "high",
     status: "actionable",
     observedAt,
     expiresAt: new Date(expiry).toISOString(),
-    rationale: `The White House feed has no nomination transmission after Aug 7 and Congress.gov reports zero nomination records updated in the Aug 9-15 window. Only Friday/Saturday remain; ${activeWindows} of ${windows} historical Friday/Saturday windows in the official feed contained any nomination release, giving a conservative Laplace-smoothed No probability of ${(probability * 100).toFixed(1)}%.`,
+    rationale: resultKnown
+      ? "The Aug 9-15 received-date window closed 12 hours ago. The White House official feed has no in-window transmission and Congress.gov still reports zero nomination records updated in the entire contract window."
+      : `The White House feed has no nomination transmission after Aug 7 and Congress.gov reports zero nomination records updated in the Aug 9-15 window. Only Friday/Saturday remain; ${activeWindows} of ${windows} historical Friday/Saturday windows in the official feed contained any nomination release, giving a conservative Laplace-smoothed No probability of ${(probability * 100).toFixed(1)}%.`,
     sources: [{
       url: input.feedUrl,
       kind: "authoritative",
