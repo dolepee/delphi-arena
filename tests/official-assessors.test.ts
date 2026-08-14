@@ -366,6 +366,17 @@ describe("White House/Senate nominations forecast", () => {
     expect(assessTrumpNominations({ ...base, feedBody: nominationsFeed(extra) })).toBeNull();
   });
 
+  it("does not count explanatory paragraphs as nominees", () => {
+    const release = nominationRelease({
+      publishedAt: "2026-08-14T15:00:00.000Z",
+      names: ["Alice One", "Bob Two", "Carol Three", "David Four"],
+    }).replace(
+      '<p class="has-text-align-left">NOMINATIONS SENT TO THE SENATE:</p>',
+      '<p class="has-text-align-left">NOMINATIONS SENT TO THE SENATE:</p><p>The following slate supports several departments.</p>',
+    );
+    expect(assessTrumpNominations({ ...base, feedBody: nominationsFeed(release) })).toBeNull();
+  });
+
   it("selects Yes as a published result after five enumerated in-window nominations", () => {
     const extra = nominationRelease({
       publishedAt: "2026-08-14T15:00:00.000Z",

@@ -62,7 +62,11 @@ function nominationFeedItems(body: string): NominationFeedItem[] {
         const nominationSection = afterHeader.slice(0, end);
         const entries = [...nominationSection.matchAll(/<p(?:\s[^>]*)?>([\s\S]*?)<\/p>/giu)]
           .map((entry) => xmlText(entry[1] ?? ""))
-          .filter(Boolean);
+          // The White House's current feed uses one paragraph per nominee in
+          // the stable form "Name, of Jurisdiction, to be Office". Ignore
+          // explanatory/category prose; an unfamiliar nominee shape therefore
+          // undercounts and fails closed rather than creating a false YES.
+          .filter((entry) => /,\s+of\b[\s\S]*?,\s+to be\b/iu.test(entry));
         nominationCount = entries.length > 0 ? entries.length : null;
       }
     }
