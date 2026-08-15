@@ -232,7 +232,7 @@ describe("LMSR quote and allocation controls", () => {
     expect(orderBudget({ policy: POLICY, assessment: scheduled, totalEquityTst: 1000, availableTst: 1000, deployedValueTst: 0, existingMarketValueTst: 0, mode: "full" })).toBe(250);
   });
 
-  it("caps LMSR result orders by worst-case post-trade face-value exposure", () => {
+  it("caps deterministic result orders by worst-case cash exposure", () => {
     const published = { ...ASSESSMENT, evidenceClass: "published_result" as const, probability: 0.99 };
     const positions: PositionView[] = [{
       marketId: MARKET.id,
@@ -249,21 +249,23 @@ describe("LMSR quote and allocation controls", () => {
     });
     expect(positioned?.existingMarketShares).toBe(800);
     expect(positioned?.existingPortfolioShares).toBe(800);
+    expect(positioned?.existingMarketValue).toBe(480);
+    expect(positioned?.existingPortfolioValue).toBe(480);
     expect(validateQuote({
       candidate: positioned!,
       policy: POLICY,
-      shares: 51,
-      quotedCostTst: 35,
-      budgetTst: 50,
+      shares: 500,
+      quotedCostTst: 370,
+      budgetTst: 400,
       mode: "full",
       totalEquityTst: 1000,
     })).toBeNull();
     expect(validateQuote({
       candidate: positioned!,
       policy: POLICY,
-      shares: 50,
-      quotedCostTst: 35,
-      budgetTst: 50,
+      shares: 500,
+      quotedCostTst: 350,
+      budgetTst: 400,
       mode: "full",
       totalEquityTst: 1000,
     })).not.toBeNull();
@@ -274,7 +276,7 @@ describe("LMSR quote and allocation controls", () => {
     expect(orderBudget({ policy: POLICY, assessment: ASSESSMENT, totalEquityTst: 1000, availableTst: 1, deployedValueTst: 0, existingMarketValueTst: 0, mode: "canary" })).toBe(1);
   });
 
-  it("caps quote search by remaining conservative portfolio shares", () => {
+  it("removes the share ceiling only for deterministic result quotes", () => {
     const published = { ...ASSESSMENT, evidenceClass: "published_result" as const, probability: 0.99 };
     expect(maximumAdditionalShares({
       policy: POLICY,
@@ -288,7 +290,45 @@ describe("LMSR quote and allocation controls", () => {
       }],
       marketId: MARKET.id,
       mode: "full",
-    })).toBe(550);
+    })).toBe(Number.POSITIVE_INFINITY);
+    expect(maximumAdditionalShares({
+      policy: POLICY,
+      assessment: ASSESSMENT,
+      totalEquityTst: 1000,
+      positions: [{
+        marketId: "0x2222222222222222222222222222222222222222",
+        outcomeIndex: 0,
+        shares: 400,
+        markPrice: 0.9,
+      }],
+      marketId: MARKET.id,
+      mode: "full",
+    })).toBe(350);
+  });
+
+  it("preserves the live published-result cash room instead of applying a second share cap", () => {
+    const published = { ...ASSESSMENT, evidenceClass: "published_result" as const, probability: 0.99 };
+    const budget = orderBudget({
+      policy: POLICY,
+      assessment: published,
+      totalEquityTst: 1174.53868328,
+      availableTst: 544.250828,
+      deployedValueTst: 630.28785528,
+      existingMarketValueTst: 0,
+      mode: "full",
+    });
+    expect(budget).toBeCloseTo(485.523893836, 9);
+    expect(maximumAdditionalShares({
+      policy: POLICY,
+      assessment: published,
+      totalEquityTst: 1174.53868328,
+      positions: [
+        { marketId: "0x2222222222222222222222222222222222222222", outcomeIndex: 0, shares: 406.38, markPrice: 0.712386 },
+        { marketId: "0x3333333333333333333333333333333333333333", outcomeIndex: 0, shares: 415.8, markPrice: 0.819597 },
+      ],
+      marketId: MARKET.id,
+      mode: "full",
+    })).toBe(Number.POSITIVE_INFINITY);
   });
 
   it("ranks by worst-case expected TST profit before percentage edge", () => {

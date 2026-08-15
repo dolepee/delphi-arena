@@ -49,6 +49,10 @@ export function selectCandidates(input: {
     (total, position) => total + position.shares,
     0,
   );
+  const existingPortfolioValue = input.positions.reduce(
+    (total, position) => total + position.shares * position.markPrice,
+    0,
+  );
   const markets = new Map(input.markets.map((market) => [market.id.toLowerCase(), market]));
   const positionsByMarket = new Map<string, PositionView[]>();
   for (const position of input.positions) {
@@ -83,6 +87,7 @@ export function selectCandidates(input: {
       rawEdge,
       existingMarketValue,
       existingMarketShares,
+      existingPortfolioValue,
       existingPortfolioShares,
     }];
   }).sort((left, right) =>
@@ -141,19 +146,22 @@ export function validateQuote(input: {
   const portfolioAllocationPct = resultLane
     ? input.policy.maximumPublishedResultPortfolioAllocationPct
     : input.policy.maximumPortfolioAllocationPct;
-  // Binary outcome shares cannot be worth more than 1 TST each. This face-value
-  // ceiling is conservative and remains valid even when LMSR marginal price is
-  // above the average cash paid.
-  const maximumPostTradeMarketValueTst =
-    input.candidate.existingMarketShares + input.shares;
-  const maximumPostTradePortfolioValueTst =
-    input.candidate.existingPortfolioShares + input.shares;
+  // Forecasts retain conservative face-value concentration limits. A
+  // deterministic published result instead uses cash at risk: its 1 TST face
+  // value is the expected payout, not the amount that can be lost. The quote
+  // budget and this independent check both cap the cash exposure.
+  const maximumPostTradeMarketRiskTst = resultLane
+    ? input.candidate.existingMarketValue + maximumCostTst
+    : input.candidate.existingMarketShares + input.shares;
+  const maximumPostTradePortfolioRiskTst = resultLane
+    ? input.candidate.existingPortfolioValue + maximumCostTst
+    : input.candidate.existingPortfolioShares + input.shares;
   if (
     netEdge < minimumNetEdge(input.candidate.assessment, input.policy) ||
     priceImpact > maximumPriceImpact(input.candidate.assessment, input.policy) ||
     worstCaseExpectedProfitTst <= 0 ||
-    maximumPostTradeMarketValueTst > input.totalEquityTst * marketAllocationPct / 100 ||
-    maximumPostTradePortfolioValueTst > input.totalEquityTst * portfolioAllocationPct / 100
+    maximumPostTradeMarketRiskTst > input.totalEquityTst * marketAllocationPct / 100 ||
+    maximumPostTradePortfolioRiskTst > input.totalEquityTst * portfolioAllocationPct / 100
   ) return null;
   return {
     ...input.candidate,
@@ -208,6 +216,7 @@ export function maximumAdditionalShares(input: {
   mode: "canary" | "full";
 }): number {
   const resultLane = input.mode === "full" && isDeterministicPublishedResult(input.assessment);
+  if (resultLane) return Number.POSITIVE_INFINITY;
   const marketAllocationPct = resultLane
     ? input.policy.maximumPublishedResultMarketAllocationPct
     : input.policy.maximumMarketAllocationPct;
