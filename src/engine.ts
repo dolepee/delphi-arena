@@ -53,17 +53,27 @@ export function isPlanWithinBookLimits(input: {
     (total, position) => total + position.shares,
     0,
   );
+  const sameOutcomeValue = input.book.positions
+    .filter((position) =>
+      position.marketId.toLowerCase() === input.plan.market.id.toLowerCase() &&
+      position.outcomeIndex === input.plan.assessment.outcomeIndex
+    )
+    .reduce((total, position) => total + position.shares * position.markPrice, 0);
   const freshMarket = input.book.markets.find((market) =>
     market.id.toLowerCase() === input.plan.market.id.toLowerCase()
   );
   const freshSpot = freshMarket?.prices[input.plan.assessment.outcomeIndex];
+  const allocationWithinLimits = resultLane
+    ? sameOutcomeValue + input.plan.maximumCostTst <= input.book.totalEquityTst * marketPct / 100 &&
+      input.book.deployedValueTst + input.plan.maximumCostTst <= input.book.totalEquityTst * portfolioPct / 100
+    : sameOutcomeShares + input.plan.shares <= input.book.totalEquityTst * marketPct / 100 &&
+      portfolioShares + input.plan.shares <= input.book.totalEquityTst * portfolioPct / 100;
   return freshMarket?.status === "open" &&
     freshSpot !== undefined &&
     input.plan.maximumAveragePrice - freshSpot <= maximumPriceImpact(input.plan.assessment, input.policy) &&
     !opposingPosition &&
     input.plan.maximumCostTst <= input.book.availableTst &&
-    sameOutcomeShares + input.plan.shares <= input.book.totalEquityTst * marketPct / 100 &&
-    portfolioShares + input.plan.shares <= input.book.totalEquityTst * portfolioPct / 100;
+    allocationWithinLimits;
 }
 
 export async function quoteCandidates(input: {

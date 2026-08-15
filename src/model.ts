@@ -83,6 +83,7 @@ export interface Candidate {
   rawEdge: number;
   existingMarketValue: number;
   existingMarketShares: number;
+  existingPortfolioValue: number;
   existingPortfolioShares: number;
 }
 
