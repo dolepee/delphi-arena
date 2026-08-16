@@ -15,7 +15,8 @@ describe("production systemd units", () => {
 
     expect(assess).toContain(`/usr/bin/flock -w 20 -E 0 ${sharedLock}`);
     expect(cycle).toContain(`/usr/bin/flock -n -E 0 ${sharedLock}`);
-    expect(event).toContain(`/usr/bin/flock -w 20 -E 0 ${sharedLock}`);
+    expect(event).toContain(`/usr/bin/flock -w 20 ${sharedLock}`);
+    expect(event).not.toContain("-E 0");
     expect(manage).toContain(`/usr/bin/flock -w 20 -E 0 ${sharedLock}`);
     expect(settle).toContain(`/usr/bin/flock -w 20 -E 0 ${sharedLock}`);
 

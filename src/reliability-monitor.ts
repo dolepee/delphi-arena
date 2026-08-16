@@ -142,10 +142,16 @@ export function evaluateReliability(input: {
     }
   }
   if (input.pendingTradeId) {
-    issues.push({ code: "pending_trade_intent", detail: `unresolved trade intent ${input.pendingTradeId}` });
+    issues.push({
+      code: `pending_trade_intent:${input.pendingTradeId}`,
+      detail: `unresolved trade intent ${input.pendingTradeId}`,
+    });
   }
   if (input.pendingExitId) {
-    issues.push({ code: "pending_exit_intent", detail: `unresolved exit intent ${input.pendingExitId}` });
+    issues.push({
+      code: `pending_exit_intent:${input.pendingExitId}`,
+      detail: `unresolved exit intent ${input.pendingExitId}`,
+    });
   }
   if (input.gasEth < input.minimumGasEth) {
     issues.push({ code: "gas_below_reserve", detail: `${input.gasEth} ETH is below ${input.minimumGasEth} ETH` });
