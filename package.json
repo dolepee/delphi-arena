@@ -15,6 +15,7 @@
     "quote-exits": "tsx src/cli/quote-exits.ts",
     "opportunity-audit": "tsx src/cli/opportunity-audit.ts",
     "opportunity-monitor": "tsx src/cli/opportunity-monitor.ts",
+    "leaderboard-monitor": "tsx src/cli/leaderboard-monitor.ts",
     "monitor": "tsx src/cli/monitor.ts",
     "cycle": "tsx src/cli/run-cycle.ts",
     "manage-positions": "tsx src/cli/manage-positions.ts",
