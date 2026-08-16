@@ -132,7 +132,11 @@ export function evaluateReliability(input: {
   checkUnit("delphi-opportunities.service", 180_000);
 
   if (input.resultCapableMarketIds.length > 0) {
-    if (input.sourceState.observedAt === null || input.now - input.sourceState.observedAt > 10 * 60_000) {
+    if (
+      input.sourceState.observedAt === null ||
+      !Number.isFinite(input.sourceState.observedAt) ||
+      input.now - input.sourceState.observedAt > 10 * 60_000
+    ) {
       issues.push({ code: "source_observations_stale", detail: "authoritative source observations are older than ten minutes" });
     }
     for (const marketId of input.resultCapableMarketIds) {

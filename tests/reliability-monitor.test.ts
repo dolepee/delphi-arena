@@ -114,4 +114,11 @@ describe("production reliability evaluation", () => {
     expect(evaluateReliability(value).map((issue) => issue.code))
       .toContain("unit_stale:delphi-event.service");
   });
+
+  it("fails stale-source validation closed on an unparseable timestamp", () => {
+    const value = input();
+    value.sourceState.observedAt = Number.NaN;
+    expect(evaluateReliability(value).map((issue) => issue.code))
+      .toContain("source_observations_stale");
+  });
 });
