@@ -9,6 +9,7 @@ import { client, assertSignerIdentity } from "../delphi.js";
 import { ExitLedger } from "../exit-ledger.js";
 import { TradeLedger } from "../ledger.js";
 import {
+  batchReliabilityIssues,
   evaluateReliability,
   loadJsonFile,
   parseSystemdShow,
@@ -73,9 +74,15 @@ async function main(): Promise<void> {
       .filter((item) => item.ok === true && typeof item.marketId === "string")
       .map((item) => item.marketId!.toLowerCase()),
   );
+  const activeMarketIds = new Set(
+    book.markets
+      .filter((market) => market.status === "open")
+      .map((market) => market.id.toLowerCase()),
+  );
   const resultCapableMarketIds = (opportunitiesFile?.markets ?? [])
     .filter((market) => (market.resultCapableOutcomes?.length ?? 0) > 0 && typeof market.marketId === "string")
-    .map((market) => market.marketId!);
+    .map((market) => market.marketId!)
+    .filter((marketId) => activeMarketIds.has(marketId.toLowerCase()));
   const issues = evaluateReliability({
     now,
     services: parseSystemdShow(systemd.stdout),
@@ -97,20 +104,24 @@ async function main(): Promise<void> {
   const previousAlerts = await loadJsonFile<AlertState>(alertStatePath);
   const previousCodes = new Set(previousAlerts?.activeCodes ?? []);
   const newIssues = issues.filter((issue) => !previousCodes.has(issue.code));
-  let reliabilityAlertSent = false;
-  if (newIssues.length > 0) {
-    reliabilityAlertSent = await sendAlert(
+  const deliveredCodes = new Set(
+    issues.filter((issue) => previousCodes.has(issue.code)).map((issue) => issue.code),
+  );
+  let allNewIssuesSent = true;
+  for (const batch of batchReliabilityIssues(newIssues)) {
+    const sent = await sendAlert(
       "RELIABILITY",
-      newIssues.map((issue) => `${issue.code}\n${issue.detail}`).join("\n\n"),
+      batch.map((issue) => `${issue.code}\n${issue.detail}`).join("\n\n"),
     );
+    allNewIssuesSent &&= sent;
+    if (sent) batch.forEach((issue) => deliveredCodes.add(issue.code));
   }
-  if (newIssues.length === 0 || reliabilityAlertSent) {
-    await savePrivateJson(alertStatePath, {
-      version: 1,
-      activeCodes: issues.map((issue) => issue.code).sort(),
-      observedAt: new Date(now).toISOString(),
-    } satisfies AlertState);
-  }
+  const reliabilityAlertSent = newIssues.length > 0 && allNewIssuesSent;
+  await savePrivateJson(alertStatePath, {
+    version: 1,
+    activeCodes: [...deliveredCodes].sort(),
+    observedAt: new Date(now).toISOString(),
+  } satisfies AlertState);
 
   const fundingMarkerPath = resolve(directory, "funding-alert.json");
   const fundingMarker = await loadJsonFile<{ alerted?: boolean }>(fundingMarkerPath);

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  batchReliabilityIssues,
   evaluateReliability,
   parseSystemdShow,
   type ReliabilityBaseline,
@@ -65,6 +66,16 @@ function input() {
 }
 
 describe("production reliability evaluation", () => {
+  it("batches alerts without hiding issue codes beyond Telegram's limit", () => {
+    const batches = batchReliabilityIssues([
+      { code: "first", detail: "a".repeat(40) },
+      { code: "second", detail: "b".repeat(40) },
+      { code: "third", detail: "c".repeat(40) },
+    ], 60);
+    expect(batches.map((batch) => batch.map((issue) => issue.code)))
+      .toEqual([["first"], ["second"], ["third"]]);
+  });
+
   it("accepts fresh successful units, sources, ledgers, gas and deployment identity", () => {
     expect(evaluateReliability(input())).toEqual([]);
   });

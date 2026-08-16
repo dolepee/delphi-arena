@@ -28,6 +28,31 @@ export interface ReliabilityIssue {
   detail: string;
 }
 
+export function batchReliabilityIssues(
+  issues: ReliabilityIssue[],
+  maximumLength = 3_600,
+): ReliabilityIssue[][] {
+  const batches: ReliabilityIssue[][] = [];
+  let current: ReliabilityIssue[] = [];
+  let currentLength = 0;
+  for (const issue of issues) {
+    const renderedLength = `${issue.code}\n${issue.detail}`.length;
+    if (renderedLength > maximumLength) {
+      throw new Error(`reliability issue ${issue.code} exceeds alert limit`);
+    }
+    const separatorLength = current.length > 0 ? 2 : 0;
+    if (current.length > 0 && currentLength + separatorLength + renderedLength > maximumLength) {
+      batches.push(current);
+      current = [];
+      currentLength = 0;
+    }
+    current.push(issue);
+    currentLength += (current.length > 1 ? 2 : 0) + renderedLength;
+  }
+  if (current.length > 0) batches.push(current);
+  return batches;
+}
+
 function latestTimestamp(state: ServiceState): number | null {
   const values = [state.execMainExitAt, state.inactiveEnterAt]
     .filter((value): value is number => value !== null);
