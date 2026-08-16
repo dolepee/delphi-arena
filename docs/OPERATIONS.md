@@ -8,6 +8,8 @@ The authoritative-result lane runs through `delphi-event.timer` every 15 seconds
 
 `delphi-opportunities.timer` compares every open listing with `config/opportunities.json` once per minute. An unknown market is not eligible for execution: the watcher alerts Telegram, records it in private runtime state, and leaves it unclassified until its trading close, decisive-fact timing, source, capacity, and outcome mapping are reviewed.
 
+`delphi-leaderboard.timer` runs independently every four hours and never acquires the trading write lock. It reconstructs the active competition table from the official market catalog, Goldsky gateway events, onchain TST balances, and current contract marks. Events for gateway markets outside the official competition catalog are counted and excluded. Any missing balance or unpriced held position fails the snapshot instead of publishing a partial rank. Timestamped and latest snapshots are private runtime state under `leaderboard/`; alerts cover third-place threshold movement, new markets traded by the top five, large podium moves, and monitor failure.
+
 ## Funding gate
 
 1. Confirm the registered wallet has at least 1,000 TST and at least 0.001 ETH.

@@ -43,6 +43,18 @@ describe("production systemd units", () => {
     expect(timer).toContain("RandomizedDelaySec=0");
   });
 
+  it("runs leaderboard intelligence independently from trading every four hours", async () => {
+    const [service, timer] = await Promise.all([
+      readFile(new URL("../deploy/delphi-leaderboard.service", import.meta.url), "utf8"),
+      readFile(new URL("../deploy/delphi-leaderboard.timer", import.meta.url), "utf8"),
+    ]);
+    expect(service).toContain("npm run leaderboard-monitor");
+    expect(service).not.toContain(sharedLock);
+    expect(service).toContain("ReadWritePaths=/var/lib/delphi-arena");
+    expect(timer).toContain("OnUnitActiveSec=4h");
+    expect(timer).toContain("Persistent=true");
+  });
+
   it("runs position management after the settlement sweep", async () => {
     const timer = await readFile(
       new URL("../deploy/delphi-manage.timer", import.meta.url),
