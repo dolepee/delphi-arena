@@ -32,6 +32,13 @@ describe("production systemd units", () => {
     expect(timer).toContain("AccuracySec=1s");
   });
 
+  it("checks production reliability every minute without timer jitter", async () => {
+    const timer = await readFile(new URL("../deploy/delphi-monitor.timer", import.meta.url), "utf8");
+    expect(timer).toContain("OnUnitActiveSec=1min");
+    expect(timer).toContain("RandomizedDelaySec=0");
+    expect(timer).toContain("AccuracySec=5s");
+  });
+
   it("checks newly listed markets every minute and fails them closed", async () => {
     const [service, timer] = await Promise.all([
       readFile(new URL("../deploy/delphi-opportunities.service", import.meta.url), "utf8"),

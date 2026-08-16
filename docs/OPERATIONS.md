@@ -10,6 +10,8 @@ The authoritative-result lane runs through `delphi-event.timer` every 15 seconds
 
 `delphi-leaderboard.timer` runs independently every four hours and never acquires the trading write lock. It reconstructs the active competition table from the official market catalog, Goldsky gateway events, onchain TST balances, and current contract marks. Events for gateway markets outside the official competition catalog are counted and excluded. Any missing balance or unpriced held position fails the snapshot instead of publishing a partial rank. Timestamped and latest snapshots are private runtime state under `leaderboard/`; alerts cover third-place threshold movement, new markets traded by the top five, large podium moves, and monitor failure.
 
+`delphi-monitor.timer` runs every minute without jitter. It checks event and opportunity timer activity, successful-cycle freshness, authoritative-source health for result-capable markets, unresolved trade/exit intents, gas reserve, and drift in the immutable release target or policy hash. The first reviewed deployment records a private baseline; any later deployment must deliberately replace that baseline only after release parity is verified. Alert state is deduplicated and clears on recovery so a recurrence alerts again. This monitor is read-only with respect to the chain and does not hold the shared trading lock.
+
 ## Funding gate
 
 1. Confirm the registered wallet has at least 1,000 TST and at least 0.001 ETH.

@@ -1,5 +1,5 @@
 [Unit]
-Description=Delphi Arena organizer-funding monitor
+Description=Delphi Arena production reliability monitor
 After=network-online.target
 Wants=network-online.target
 
@@ -15,4 +15,3 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/var/lib/delphi-arena
-
