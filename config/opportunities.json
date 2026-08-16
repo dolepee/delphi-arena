@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "markets": [
+    {
+      "marketId": "0xdc90c677aee2b74dd060bfa2eff00a27d4d4ca1b",
+      "classification": "forecast_only",
+      "resultCapableOutcomes": [],
+      "earliestDecisiveAt": "2026-08-17T00:00:00.000Z",
+      "rationale": "The UTC day completes after the market stops trading at 22:00 UTC."
+    },
+    {
+      "marketId": "0xacdb060b36b244dd8ccc2d0fceb04a8e04a7e3d2",
+      "classification": "forecast_only",
+      "resultCapableOutcomes": [],
+      "earliestDecisiveAt": "2026-08-18T00:00:00.000Z",
+      "rationale": "The CoinGecko UTC daily close is known after the market stops trading at 22:00 UTC."
+    },
+    {
+      "marketId": "0x9face9fff97f8b240e5bf3be24f303742e2c040a",
+      "classification": "partial_result",
+      "resultCapableOutcomes": [0],
+      "earliestDecisiveAt": "2026-08-12T00:00:00.000Z",
+      "rationale": "YES becomes irreversible if the official count reaches six while trading remains open; NO is not exact before the publication window ends."
+    },
+    {
+      "marketId": "0x2002482530f0404c466f553a61ca4b0792e12e10",
+      "classification": "forecast_only",
+      "resultCapableOutcomes": [],
+      "earliestDecisiveAt": "2026-08-17T13:30:00.000Z",
+      "rationale": "Regular trading begins after the Delphi market closes at 13:25 UTC."
+    },
+    {
+      "marketId": "0x7fb6eb62585de2fde740bfe4b4bae0c279919021",
+      "classification": "forecast_only",
+      "resultCapableOutcomes": [],
+      "earliestDecisiveAt": "2026-08-19T00:00:00.000Z",
+      "rationale": "The organizer-named Wikimedia endpoint exposes only completed daily aggregates, so neither outcome is authoritative before trading closes at 23:00 UTC."
+    },
+    {
+      "marketId": "0xbf1712ec2db688bc0fb8c34c48d95b4d35675a65",
+      "classification": "forecast_only",
+      "resultCapableOutcomes": [],
+      "earliestDecisiveAt": "2026-08-18T20:30:00.000Z",
+      "rationale": "The measured settlement period begins one hour after the Delphi market closes."
+    },
+    {
+      "marketId": "0x2632e058b6d6dd0cd9fde366dc85e4d84271fec9",
+      "classification": "forecast_only",
+      "resultCapableOutcomes": [],
+      "earliestDecisiveAt": "2026-08-18T18:00:00.000Z",
+      "rationale": "The NOAA observation window begins one hour after the Delphi market closes."
+    }
+  ]
+}

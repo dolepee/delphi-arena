@@ -43,26 +43,79 @@ export function assessmentForPosition(input: {
 
 export function exitReason(input: {
   position: PositionView;
-  assessment: Assessment;
+  assessment: Assessment | null;
+  entryProbability: number | null;
   minimumProceedsTst: number;
   averageCostPerShare: number | null;
   minimumProfitTakeReturnPct: number;
   maximumHoldEdgeForProfitTake: number;
 }): "EVIDENCE_FLIP" | "PROFIT_TAKE" | null {
   if (
+    input.assessment?.outcomeIndex !== undefined &&
     input.assessment.outcomeIndex !== input.position.outcomeIndex &&
     input.assessment.status === "actionable" &&
     input.assessment.confidence === "high" &&
     input.assessment.evidenceClass === "published_result"
   ) return "EVIDENCE_FLIP";
 
-  if (input.assessment.outcomeIndex !== input.position.outcomeIndex || input.averageCostPerShare === null) return null;
+  if (
+    (input.assessment !== null && input.assessment.outcomeIndex !== input.position.outcomeIndex) ||
+    input.averageCostPerShare === null
+  ) return null;
+  const probability = input.assessment?.probability ?? input.entryProbability;
+  if (probability === null) return null;
   const averageExitPrice = input.minimumProceedsTst / input.position.shares;
   const returnPct = (averageExitPrice / input.averageCostPerShare - 1) * 100;
-  const holdEdge = input.assessment.probability - averageExitPrice;
+  const holdEdge = probability - averageExitPrice;
   return returnPct >= input.minimumProfitTakeReturnPct && holdEdge <= input.maximumHoldEdgeForProfitTake
     ? "PROFIT_TAKE"
     : null;
+}
+
+export function remainingEntryProbability(input: {
+  position: PositionView;
+  buys: TradeRecord[];
+  exits: ExitRecord[];
+}): number | null {
+  const keyMatches = (record: { marketId: string; outcomeIndex: number }) =>
+    record.marketId.toLowerCase() === input.position.marketId.toLowerCase() &&
+    record.outcomeIndex === input.position.outcomeIndex;
+  const lots: Array<{ shares: number; probability: number | null }> = [];
+  const events = [
+    ...input.buys.filter((record) => record.status === "CONFIRMED" && keyMatches(record))
+      .map((record) => ({ kind: "buy" as const, record })),
+    ...input.exits.filter((record) => record.status === "CONFIRMED" && keyMatches(record))
+      .map((record) => ({ kind: "exit" as const, record })),
+  ].sort((left, right) => left.record.createdAt - right.record.createdAt ||
+    (left.kind === "buy" ? -1 : 1));
+  for (const event of events) {
+    if (event.kind === "buy") {
+      lots.push({
+        shares: event.record.shares,
+        probability: event.record.assessmentProbability ?? null,
+      });
+      continue;
+    }
+    let sharesExited = event.record.shares;
+    for (const lot of lots) {
+      const consumed = Math.min(lot.shares, sharesExited);
+      lot.shares -= consumed;
+      sharesExited -= consumed;
+      if (sharesExited <= 1e-6) break;
+    }
+    // An unmatched exit belongs to inventory that predates this ledger and
+    // must not consume a later, newly opened lot.
+  }
+  const remaining = lots.filter((lot) => lot.shares > 1e-6);
+  const recordedShares = remaining.reduce((total, lot) => total + lot.shares, 0);
+  if (
+    Math.abs(recordedShares - input.position.shares) > 1e-4 ||
+    remaining.some((lot) => lot.probability === null)
+  ) return null;
+  return remaining.reduce(
+    (total, lot) => total + lot.shares * lot.probability!,
+    0,
+  ) / input.position.shares;
 }
 
 export function remainingAverageCostPerShare(input: {
@@ -131,7 +184,11 @@ export function positionLedgerGeneration(input: {
   })).digest("hex");
 }
 
-export async function runPositionManagementCycle(client: DelphiClient, now = Date.now()) {
+export async function runPositionManagementCycle(
+  client: DelphiClient,
+  now = Date.now(),
+  options: { allowStaleProfitTake?: boolean } = {},
+) {
   const [policy, assessments, book] = await Promise.all([loadPolicy(), loadAssessments(), readBook(client)]);
   await assertMaintenanceReadiness(book);
   if (book.gasEth < policy.minimumGasEth) {
@@ -153,8 +210,10 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
     const market = book.markets.find((candidate) => candidate.id.toLowerCase() === position.marketId.toLowerCase());
     if (!market || market.status !== "open") continue;
     const assessment = assessmentForPosition({ assessments, position, market, policy, now });
-    if (!assessment) continue;
-    if (now >= Date.parse(assessment.expiresAt) || isPastMarketResolution(market.resolvesAt, now)) continue;
+    const entryProbability = remainingEntryProbability({ position, buys, exits });
+    if (!assessment && entryProbability === null) continue;
+    if (!assessment && options.allowStaleProfitTake !== true) continue;
+    if (isPastMarketResolution(market.resolvesAt, now)) continue;
 
     const sharesIn = sharesToRaw(position.shares);
     if (sharesIn <= 0n) continue;
@@ -171,6 +230,7 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
     const reason = exitReason({
       position,
       assessment,
+      entryProbability,
       minimumProceedsTst,
       averageCostPerShare,
       minimumProfitTakeReturnPct: policy.minimumProfitTakeReturnPct ?? 3,
@@ -181,7 +241,7 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
     const executionNow = Date.now();
     if (
       executionNow >= Date.parse(policy.competitionEndsAt) ||
-      !isAssessmentEvidenceValid({ assessment, policy, now: executionNow }) ||
+      (assessment !== null && !isAssessmentEvidenceValid({ assessment, policy, now: executionNow })) ||
       isPastMarketResolution(market.resolvesAt, executionNow)
     ) continue;
     const freshBook = await readBook(client);
@@ -196,8 +256,10 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
     );
     if (
       !freshMarket || freshMarket.status !== "open" ||
-      freshMarket.outcomes[assessment.outcomeIndex] === undefined ||
-      freshMarket.prices[assessment.outcomeIndex] === undefined ||
+      (assessment !== null && (
+        freshMarket.outcomes[assessment.outcomeIndex] === undefined ||
+        freshMarket.prices[assessment.outcomeIndex] === undefined
+      )) ||
       !freshPosition || Math.abs(freshPosition.shares - position.shares) > 1e-6
     ) continue;
 
@@ -214,6 +276,7 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
     const freshReason = exitReason({
       position: freshPosition,
       assessment,
+      entryProbability: remainingEntryProbability({ position: freshPosition, buys, exits }),
       minimumProceedsTst: freshMinimumProceedsTst,
       averageCostPerShare,
       minimumProfitTakeReturnPct: policy.minimumProfitTakeReturnPct ?? 3,
@@ -223,25 +286,25 @@ export async function runPositionManagementCycle(client: DelphiClient, now = Dat
     const finalNow = Date.now();
     if (
       finalNow >= Date.parse(policy.competitionEndsAt) ||
-      !isAssessmentEvidenceValid({ assessment, policy, now: finalNow }) ||
+      (assessment !== null && !isAssessmentEvidenceValid({ assessment, policy, now: finalNow })) ||
       isPastMarketResolution(freshMarket.resolvesAt, finalNow)
     ) continue;
     if (await activationMode() !== "full") continue;
 
     const positionGeneration = positionLedgerGeneration({ position, buys });
-    const evidenceFingerprint = assessmentEvidenceFingerprint(assessment);
+    const evidenceFingerprint = assessment ? assessmentEvidenceFingerprint(assessment) : undefined;
     const decisionId = createHash("sha256").update(JSON.stringify({
       marketId: market.id.toLowerCase(), outcomeIndex: position.outcomeIndex, shares: position.shares,
-      reason, evidenceFingerprint, positionGeneration,
+      reason, evidenceFingerprint: evidenceFingerprint ?? null, entryProbability, positionGeneration,
     })).digest("hex");
     if (await exitLedger.get(decisionId)) continue;
     await exitLedger.prepare({
       decisionId, marketId: market.id, outcomeIndex: position.outcomeIndex,
       shares: position.shares, quotedProceedsTst: freshQuotedProceedsTst,
       minimumProceedsTst: freshMinimumProceedsTst, reason,
-      assessmentObservedAt: assessment.observedAt,
+      assessmentObservedAt: assessment?.observedAt,
       assessmentFingerprint: evidenceFingerprint,
-      soldOutcomeCooldownUntil: reason === "EVIDENCE_FLIP" ? assessment.expiresAt : undefined,
+      soldOutcomeCooldownUntil: reason === "EVIDENCE_FLIP" ? assessment?.expiresAt : undefined,
       createdAt: finalNow,
     });
     const result = await client.sellShares({

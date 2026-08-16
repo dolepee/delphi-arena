@@ -172,6 +172,10 @@ export async function runTradingCycle(client: DelphiClient, now = Date.now()) {
           quotedCostTst: plan.quotedCostTst,
           maximumCostTst: plan.maximumCostTst,
           assessmentFingerprint: assessmentEvidenceFingerprint(plan.assessment),
+          assessmentProbability: plan.assessment.probability,
+          assessmentEvidenceClass: plan.assessment.evidenceClass,
+          assessmentObservedAt: plan.assessment.observedAt,
+          assessmentExpiresAt: plan.assessment.expiresAt,
           createdAt: now,
         });
         await client.ensureTokenApproval({

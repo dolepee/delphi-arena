@@ -13,6 +13,7 @@ export async function findQuotedPlan(input: {
   mode: "canary" | "full";
   totalEquityTst: number;
   maximumShares?: number;
+  maximumAttempts?: number;
 }): Promise<QuotedPlan | null> {
   if (input.budgetTst <= 0) return null;
   let low = 0;
@@ -22,7 +23,7 @@ export async function findQuotedPlan(input: {
   ));
   let best: QuotedPlan | null = null;
   const quoted = new Set<number>();
-  for (let attempt = 0; attempt < 22 && high >= 0.01; attempt += 1) {
+  for (let attempt = 0; attempt < (input.maximumAttempts ?? 22) && high >= 0.01; attempt += 1) {
     const shares = cents((low + high) / 2);
     if (shares < 0.01 || quoted.has(shares)) break;
     quoted.add(shares);

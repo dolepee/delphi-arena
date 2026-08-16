@@ -14,6 +14,11 @@ describe("trade ledger", () => {
       outcomeIndex: 0,
       shares: 1,
       quotedCostTst: 0.6,
+      assessmentFingerprint: "d".repeat(64),
+      assessmentProbability: 0.91,
+      assessmentEvidenceClass: "forecast" as const,
+      assessmentObservedAt: "2026-08-16T20:00:00.000Z",
+      assessmentExpiresAt: "2026-08-16T20:10:00.000Z",
       createdAt: 1,
     };
     await ledger.prepare(record);
@@ -21,6 +26,7 @@ describe("trade ledger", () => {
     await ledger.confirm(record.decisionId, `0x${"c".repeat(64)}`);
     expect(await ledger.pending()).toBeNull();
     expect((await ledger.get(record.decisionId))?.status).toBe("CONFIRMED");
+    expect((await ledger.get(record.decisionId))?.assessmentProbability).toBe(0.91);
   });
 });
 
