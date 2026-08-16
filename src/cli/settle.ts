@@ -63,22 +63,23 @@ if (results.length > 0) await sendAlert("SETTLEMENT", JSON.stringify(results));
 const markerPath = resolve(stateDirectory(), "settlement-overdue-alerts.json");
 const alerted = await loadAlertedSettlementMarkets(markerPath);
 const newlyOverdue = awaiting.filter((item) => item.overdue && !alerted.has(item.marketAddress.toLowerCase()));
-let overdueAlertSent = false;
-if (newlyOverdue.length > 0) {
-  overdueAlertSent = await sendAlert(
+const overdueAlertsSent: string[] = [];
+for (const item of newlyOverdue) {
+  const sent = await sendAlert(
     "SETTLEMENT OVERDUE",
-    newlyOverdue.map((item) =>
-      `${item.question}\n${item.marketAddress}\nsettlement window started ${item.settlementStartsAt ?? "unknown"}\nstill awaiting on-chain`,
-    ).join("\n\n"),
+    `${item.marketAddress}\nsettlement window started ${item.settlementStartsAt ?? "unknown"}\nstill awaiting on-chain\n${item.question}`,
   );
-  if (overdueAlertSent) {
-    for (const item of newlyOverdue) alerted.add(item.marketAddress.toLowerCase());
-    await saveAlertedSettlementMarkets(markerPath, alerted);
-  }
+  if (!sent) continue;
+  const normalizedMarketAddress = item.marketAddress.toLowerCase();
+  alerted.add(normalizedMarketAddress);
+  overdueAlertsSent.push(normalizedMarketAddress);
+}
+if (overdueAlertsSent.length > 0) {
+  await saveAlertedSettlementMarkets(markerPath, alerted);
 }
 process.stdout.write(`${JSON.stringify({
   status: "SETTLEMENT_SWEEP",
   results,
   awaiting,
-  overdueAlertSent,
+  overdueAlertsSent,
 }, null, 2)}\n`);
