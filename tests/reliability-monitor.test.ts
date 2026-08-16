@@ -115,6 +115,22 @@ describe("production reliability evaluation", () => {
       .toContain("unit_stale:delphi-event.service");
   });
 
+  it("rejects future-dated service activity beyond the clock-skew allowance", () => {
+    const future = input();
+    const futureEvent = future.services.get("delphi-event.service")!;
+    futureEvent.execMainExitAt = NOW + 60_001;
+    futureEvent.inactiveEnterAt = NOW + 60_001;
+    expect(evaluateReliability(future).map((issue) => issue.code))
+      .toContain("unit_stale:delphi-event.service");
+
+    const tolerated = input();
+    const toleratedEvent = tolerated.services.get("delphi-event.service")!;
+    toleratedEvent.execMainExitAt = NOW + 60_000;
+    toleratedEvent.inactiveEnterAt = NOW + 60_000;
+    expect(evaluateReliability(tolerated).map((issue) => issue.code))
+      .not.toContain("unit_stale:delphi-event.service");
+  });
+
   it("fails stale-source validation closed on an unparseable timestamp", () => {
     const value = input();
     value.sourceState.observedAt = Number.NaN;

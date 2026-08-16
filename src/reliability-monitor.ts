@@ -116,7 +116,12 @@ export function evaluateReliability(input: {
       return;
     }
     const latest = latestTimestamp(state);
-    if (latest === null || input.now - latest > maximumAgeMs) {
+    if (
+      latest === null ||
+      !Number.isFinite(latest) ||
+      latest > input.now + 60_000 ||
+      input.now - latest > maximumAgeMs
+    ) {
       issues.push({ code: `unit_stale:${id}`, detail: `${id} has no successful activity inside ${maximumAgeMs / 1_000}s` });
     }
   };
