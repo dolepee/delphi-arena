@@ -28,6 +28,10 @@ npm run sources
 npm run readiness
 npm run preview
 npm run monitor
+npm run opportunity-audit
+npm run opportunity-monitor
+npm run quote-exits
+npm run event-cycle
 ```
 
-`npm run cycle` and `npm run settle` are write-capable. Production activation requires the completed canary and full-live approval records described in `docs/OPERATIONS.md`.
+`npm run cycle`, `npm run settle`, and `npm run event-cycle` are write-capable. Production activation requires the completed canary and full-live approval records described in `docs/OPERATIONS.md`.

@@ -1,0 +1,13 @@
+[Unit]
+Description=Check Delphi market classification coverage every minute
+
+[Timer]
+OnBootSec=20s
+OnUnitActiveSec=1min
+AccuracySec=2s
+RandomizedDelaySec=0
+Persistent=false
+Unit=delphi-opportunities.service
+
+[Install]
+WantedBy=timers.target

@@ -1,5 +1,5 @@
 [Unit]
-Description=Delphi Arena deterministic official-source assessor
+Description=Delphi Arena serialized authoritative-event cycle
 After=network-online.target
 Wants=network-online.target
 
@@ -9,7 +9,7 @@ User=delphi
 Group=delphi
 WorkingDirectory=/opt/delphi-arena/current
 EnvironmentFile=/etc/delphi-arena/delphi.env
-ExecStart=/usr/bin/flock -w 20 -E 0 /var/lib/delphi-arena/write.lock /usr/bin/npm run assess
+ExecStart=/usr/bin/flock -w 20 -E 0 /var/lib/delphi-arena/write.lock /usr/bin/npm run event-cycle
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict

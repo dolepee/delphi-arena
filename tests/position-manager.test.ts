@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Assessment, PositionView } from "../src/model.js";
-import { assessmentForPosition, exitReason, isPastMarketResolution, positionLedgerGeneration, remainingAverageCostPerShare } from "../src/position-manager.js";
+import { assessmentForPosition, exitReason, isPastMarketResolution, positionLedgerGeneration, remainingAverageCostPerShare, remainingEntryProbability } from "../src/position-manager.js";
 
 const position: PositionView = {
   marketId: "0x1111111111111111111111111111111111111111",
@@ -65,6 +65,7 @@ describe("position exit policy", () => {
     expect(exitReason({
       position,
       assessment: { ...assessment, outcomeIndex: 1, evidenceClass: "published_result", probability: 0.99 },
+      entryProbability: null,
       minimumProceedsTst: 10,
       averageCostPerShare: 0.7,
       minimumProfitTakeReturnPct: 3,
@@ -76,6 +77,7 @@ describe("position exit policy", () => {
     expect(exitReason({
       position,
       assessment,
+      entryProbability: null,
       minimumProceedsTst: 80,
       averageCostPerShare: 0.7,
       minimumProfitTakeReturnPct: 3,
@@ -87,6 +89,7 @@ describe("position exit policy", () => {
     expect(exitReason({
       position,
       assessment: { ...assessment, probability: 0.99, evidenceClass: "published_result" },
+      entryProbability: null,
       minimumProceedsTst: 92,
       averageCostPerShare: 0.7,
       minimumProfitTakeReturnPct: 3,
@@ -98,6 +101,7 @@ describe("position exit policy", () => {
     expect(exitReason({
       position,
       assessment,
+      entryProbability: null,
       minimumProceedsTst: 80,
       averageCostPerShare: null,
       minimumProfitTakeReturnPct: 3,
@@ -109,12 +113,37 @@ describe("position exit policy", () => {
     const common = {
       position,
       assessment,
+      entryProbability: null,
       averageCostPerShare: 0.97,
       minimumProfitTakeReturnPct: 3,
       maximumHoldEdgeForProfitTake: 0.02,
     };
     expect(exitReason({ ...common, minimumProceedsTst: 96 })).toBeNull();
     expect(exitReason({ ...common, minimumProceedsTst: 98 })).toBeNull();
+  });
+
+  it("takes profit from a persisted entry probability when live evidence expires", () => {
+    expect(exitReason({
+      position,
+      assessment: null,
+      entryProbability: 0.81,
+      minimumProceedsTst: 80,
+      averageCostPerShare: 0.7,
+      minimumProfitTakeReturnPct: 3,
+      maximumHoldEdgeForProfitTake: 0.02,
+    })).toBe("PROFIT_TAKE");
+  });
+
+  it("refuses an evidence-free legacy exit", () => {
+    expect(exitReason({
+      position,
+      assessment: null,
+      entryProbability: null,
+      minimumProceedsTst: 80,
+      averageCostPerShare: 0.7,
+      minimumProfitTakeReturnPct: 3,
+      maximumHoldEdgeForProfitTake: 0.02,
+    })).toBeNull();
   });
 });
 
@@ -185,5 +214,43 @@ describe("remaining inventory cost basis", () => {
       buys: [firstBuy, confirmedBuy("c", 100, 90, 3)],
     });
     expect(reopened).not.toBe(first);
+  });
+});
+
+describe("remaining entry probability", () => {
+  const buy = (id: string, shares: number, probability?: number) => ({
+    decisionId: id.repeat(64), marketId: position.marketId, outcomeIndex: position.outcomeIndex,
+    shares, quotedCostTst: shares * 0.5, assessmentProbability: probability,
+    status: "CONFIRMED" as const, createdAt: id.charCodeAt(0), transactionHash: `0x${id.repeat(64)}`,
+  });
+  const exit = (shares: number, createdAt = 100) => ({
+    decisionId: "e".repeat(64), marketId: position.marketId, outcomeIndex: position.outcomeIndex,
+    shares, quotedProceedsTst: shares * 0.8, minimumProceedsTst: shares * 0.78,
+    reason: "PROFIT_TAKE" as const, status: "CONFIRMED" as const, createdAt,
+    transactionHash: `0x${"f".repeat(64)}`,
+  });
+
+  it("uses the share-weighted probability of unsold lots", () => {
+    expect(remainingEntryProbability({
+      position: { ...position, shares: 100 },
+      buys: [buy("a", 100, 0.7), buy("b", 100, 0.9)],
+      exits: [exit(100)],
+    })).toBeCloseTo(0.9);
+  });
+
+  it("fails closed when a remaining legacy lot lacks probability", () => {
+    expect(remainingEntryProbability({
+      position: { ...position, shares: 100 },
+      buys: [buy("a", 100)],
+      exits: [],
+    })).toBeNull();
+  });
+
+  it("does not apply an older untracked-position exit to a later entry probability", () => {
+    expect(remainingEntryProbability({
+      position: { ...position, shares: 100 },
+      buys: [buy("b", 100, 0.9)],
+      exits: [exit(100, 1)],
+    })).toBeCloseTo(0.9);
   });
 });

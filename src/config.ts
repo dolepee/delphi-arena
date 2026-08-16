@@ -25,6 +25,10 @@ export function liveConfirmation(): string {
   return `DELPHI-LIVE:Conviction:${EXPECTED_WALLET}`;
 }
 
+export function eventExecutionEnabled(): boolean {
+  return process.env.DELPHI_EVENT_EXECUTION_ENABLED?.trim().toLowerCase() === "true";
+}
+
 export function assertEnvironment(): void {
   if (process.env.DELPHI_NETWORK !== "competition-testnet") {
     throw new Error("DELPHI_NETWORK must be competition-testnet");
