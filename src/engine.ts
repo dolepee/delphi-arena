@@ -164,6 +164,7 @@ export async function runTradingCycle(client: DelphiClient, now = Date.now()) {
         const freshBook = await readBook(client);
         if (!isPlanWithinBookLimits({ plan, policy, book: freshBook })) continue;
         const maximumCost = plan.maximumCostAtomic;
+        const preparedAt = Date.now();
         await ledger.prepare({
           decisionId: plan.decisionId,
           marketId: plan.market.id,
@@ -176,7 +177,7 @@ export async function runTradingCycle(client: DelphiClient, now = Date.now()) {
           assessmentEvidenceClass: plan.assessment.evidenceClass,
           assessmentObservedAt: plan.assessment.observedAt,
           assessmentExpiresAt: plan.assessment.expiresAt,
-          createdAt: now,
+          createdAt: preparedAt,
         });
         await client.ensureTokenApproval({
           marketAddress: plan.market.id,
