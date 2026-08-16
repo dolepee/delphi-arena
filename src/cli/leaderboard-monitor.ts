@@ -4,11 +4,13 @@ import { EXPECTED_WALLET, stateDirectory } from "../config.js";
 import { assertSignerIdentity, client } from "../delphi.js";
 import {
   buildLeaderboard,
+  chunkLeaderboardAlert,
   filterEventsToCompetitionMarkets,
   leaderboardChanges,
   loadCompetitionEvents,
   loadLeaderboardSnapshot,
   saveLeaderboardSnapshot,
+  shouldAdvanceLeaderboardSnapshot,
   type MarketMark,
 } from "../leaderboard-monitor.js";
 
@@ -146,15 +148,22 @@ async function main(): Promise<void> {
   const changes = leaderboardChanges(previous, snapshot);
   const timestampPath = resolve(directory, `${observedAt.replaceAll(":", "-")}.json`);
   await saveLeaderboardSnapshot(timestampPath, snapshot);
-  await saveLeaderboardSnapshot(latestPath, snapshot);
+  let allAlertsSent = true;
   if (changes.length > 0) {
     const conviction = snapshot.conviction;
-    await sendAlert("LEADERBOARD", [
+    const detail = [
       ...changes,
       `Conviction rank ${conviction?.rank ?? "unknown"}`,
       `value ${conviction?.accountValueTst.toFixed(2) ?? "unknown"} TST`,
       `gap to third ${snapshot.gapToThirdTst?.toFixed(2) ?? "unknown"} TST`,
-    ].join("\n"));
+    ].join("\n");
+    for (const chunk of chunkLeaderboardAlert(detail)) {
+      const sent = await sendAlert("LEADERBOARD", chunk);
+      allAlertsSent = sent && allAlertsSent;
+    }
+  }
+  if (shouldAdvanceLeaderboardSnapshot(changes.length, allAlertsSent)) {
+    await saveLeaderboardSnapshot(latestPath, snapshot);
   }
   process.stdout.write(`${JSON.stringify({
     status: "LEADERBOARD_SNAPSHOT",

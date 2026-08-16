@@ -44,6 +44,22 @@ Result=success
 ExecMainStatus=0
 ExecMainStartTimestamp=
 ExecMainExitTimestamp=
+InactiveEnterTimestamp=
+
+Id=delphi-settle.service
+ActiveState=inactive
+Result=success
+ExecMainStatus=0
+ExecMainStartTimestamp=Sun 2026-08-16 22:19:30 UTC
+ExecMainExitTimestamp=Sun 2026-08-16 22:19:32 UTC
+InactiveEnterTimestamp=Sun 2026-08-16 22:19:32 UTC
+
+Id=delphi-settle.timer
+ActiveState=active
+Result=success
+ExecMainStatus=0
+ExecMainStartTimestamp=
+ExecMainExitTimestamp=
 InactiveEnterTimestamp=`;
 
 function input(): Parameters<typeof evaluateReliability>[0] {
@@ -84,6 +100,7 @@ describe("production reliability evaluation", () => {
     const value = input();
     value.services.get("delphi-event.timer")!.activeState = "inactive";
     value.services.get("delphi-event.service")!.result = "exit-code";
+    value.services.get("delphi-settle.service")!.result = "exit-code";
     const issues = evaluateReliability({
       ...value,
       sourceState: { observedAt: NOW - 11 * 60_000, healthyMarketIds: new Set() },
@@ -96,6 +113,7 @@ describe("production reliability evaluation", () => {
     expect(issues.map((issue) => issue.code)).toEqual(expect.arrayContaining([
       "timer_inactive:delphi-event.timer",
       "unit_failed:delphi-event.service",
+      "unit_failed:delphi-settle.service",
       "source_observations_stale",
       "source_unhealthy:0xmarket",
       "pending_trade_intent:trade-1",

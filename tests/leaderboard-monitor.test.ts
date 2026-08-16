@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   buildLeaderboard,
+  chunkLeaderboardAlert,
   filterEventsToCompetitionMarkets,
   leaderboardChanges,
+  shouldAdvanceLeaderboardSnapshot,
   type CompetitionEvents,
   type LeaderboardSnapshot,
   type MarketMark,
@@ -127,5 +129,15 @@ describe("chain-derived leaderboard", () => {
       `top-five wallets entered ${M2}`,
       "large podium move detected",
     ]);
+  });
+
+  it("chunks every leaderboard alert byte and retains the comparison snapshot until delivery", () => {
+    const detail = `${"a".repeat(10)}\n${"b".repeat(10)}\n${"c".repeat(10)}`;
+    const chunks = chunkLeaderboardAlert(detail, 12);
+    expect(chunks.every((chunk) => chunk.length <= 12)).toBe(true);
+    expect(chunks.join("\n")).toBe(detail);
+    expect(shouldAdvanceLeaderboardSnapshot(1, false)).toBe(false);
+    expect(shouldAdvanceLeaderboardSnapshot(1, true)).toBe(true);
+    expect(shouldAdvanceLeaderboardSnapshot(0, false)).toBe(true);
   });
 });

@@ -140,6 +140,8 @@ export function evaluateReliability(input: {
   checkUnit("delphi-event.service", 60_000);
   checkTimer("delphi-opportunities.timer");
   checkUnit("delphi-opportunities.service", 180_000);
+  checkTimer("delphi-settle.timer");
+  checkUnit("delphi-settle.service", 180_000);
 
   if (input.resultCapableMarketIds.length > 0) {
     if (

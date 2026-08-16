@@ -37,23 +37,13 @@ interface AlertState {
 
 async function main(): Promise<void> {
   await assertSignerIdentity();
-  const now = Date.now();
   const directory = stateDirectory();
   const policyPath = resolve(process.env.DELPHI_POLICY_PATH?.trim() || "config/policy.json");
   const sourcePath = resolve(directory, "latest-source-observations.json");
   const opportunitiesPath = resolve("config/opportunities.json");
-  const [policy, book, systemd, sourceFile, opportunitiesFile, policyBody] = await Promise.all([
+  const [policy, book, sourceFile, opportunitiesFile, policyBody] = await Promise.all([
     loadPolicy(),
     readBook(client),
-    execFileAsync("systemctl", [
-      "show",
-      "delphi-event.service",
-      "delphi-event.timer",
-      "delphi-opportunities.service",
-      "delphi-opportunities.timer",
-      "--property=Id,ActiveState,Result,ExecMainStatus,ExecMainStartTimestamp,ExecMainExitTimestamp,InactiveEnterTimestamp",
-      "--no-pager",
-    ]),
     loadJsonFile<SourceObservationFile>(sourcePath),
     loadJsonFile<OpportunitiesFile>(opportunitiesPath),
     readFile(policyPath),
@@ -62,10 +52,6 @@ async function main(): Promise<void> {
   const policyHash = createHash("sha256").update(policyBody).digest("hex");
   const baselinePath = resolve(directory, "reliability-baseline.json");
   let baseline = await loadJsonFile<ReliabilityBaseline>(baselinePath);
-  if (!baseline) {
-    baseline = { version: 1, releaseTarget, policyHash, recordedAt: new Date(now).toISOString() };
-    await savePrivateJson(baselinePath, baseline);
-  }
   const tradeLedger = new TradeLedger(resolve(directory, "trade-ledger.json"));
   const exitLedger = new ExitLedger(resolve(directory, "exit-ledger.json"));
   const [pendingTrade, pendingExit] = await Promise.all([tradeLedger.pending(), exitLedger.pending()]);
@@ -83,6 +69,22 @@ async function main(): Promise<void> {
     .filter((market) => (market.resultCapableOutcomes?.length ?? 0) > 0 && typeof market.marketId === "string")
     .map((market) => market.marketId!)
     .filter((marketId) => activeMarketIds.has(marketId.toLowerCase()));
+  const systemd = await execFileAsync("systemctl", [
+    "show",
+    "delphi-event.service",
+    "delphi-event.timer",
+    "delphi-opportunities.service",
+    "delphi-opportunities.timer",
+    "delphi-settle.service",
+    "delphi-settle.timer",
+    "--property=Id,ActiveState,Result,ExecMainStatus,ExecMainStartTimestamp,ExecMainExitTimestamp,InactiveEnterTimestamp",
+    "--no-pager",
+  ]);
+  const now = Date.now();
+  if (!baseline) {
+    baseline = { version: 1, releaseTarget, policyHash, recordedAt: new Date(now).toISOString() };
+    await savePrivateJson(baselinePath, baseline);
+  }
   const issues = evaluateReliability({
     now,
     services: parseSystemdShow(systemd.stdout),
