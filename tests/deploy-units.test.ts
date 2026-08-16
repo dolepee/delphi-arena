@@ -18,7 +18,8 @@ describe("production systemd units", () => {
     expect(event).toContain(`/usr/bin/flock -w 20 ${sharedLock}`);
     expect(event).not.toContain("-E 0");
     expect(manage).toContain(`/usr/bin/flock -w 20 -E 0 ${sharedLock}`);
-    expect(settle).toContain(`/usr/bin/flock -w 20 -E 0 ${sharedLock}`);
+    expect(settle).toContain(`/usr/bin/flock -w 20 ${sharedLock}`);
+    expect(settle).not.toContain("-E 0");
 
     for (const unit of [assess, cycle, event, manage, settle]) {
       expect(unit).toContain("ReadWritePaths=/var/lib/delphi-arena");

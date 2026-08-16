@@ -1,6 +1,7 @@
 import { client, assertSignerIdentity } from "../delphi.js";
 import { assertMaintenanceReadiness, readBook } from "../runtime.js";
 import { sendAlert } from "../alerts.js";
+import { stringifyJson } from "../json.js";
 import { resolve } from "node:path";
 import { stateDirectory } from "../config.js";
 import {
@@ -59,7 +60,7 @@ for (const [marketAddressValue, outcomeIndices] of positionsByMarket) {
     });
   }
 }
-if (results.length > 0) await sendAlert("SETTLEMENT", JSON.stringify(results));
+if (results.length > 0) await sendAlert("SETTLEMENT", stringifyJson(results));
 const markerPath = resolve(stateDirectory(), "settlement-overdue-alerts.json");
 const alerted = await loadAlertedSettlementMarkets(markerPath);
 const newlyOverdue = awaiting.filter((item) => item.overdue && !alerted.has(item.marketAddress.toLowerCase()));
@@ -75,9 +76,9 @@ for (const item of newlyOverdue) {
   overdueAlertsSent.push(normalizedMarketAddress);
   await saveAlertedSettlementMarkets(markerPath, alerted);
 }
-process.stdout.write(`${JSON.stringify({
+process.stdout.write(`${stringifyJson({
   status: "SETTLEMENT_SWEEP",
   results,
   awaiting,
   overdueAlertsSent,
-}, null, 2)}\n`);
+}, 2)}\n`);

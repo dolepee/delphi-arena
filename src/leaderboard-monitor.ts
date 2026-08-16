@@ -311,6 +311,27 @@ export function leaderboardChanges(previous: LeaderboardSnapshot | null, current
   return changes;
 }
 
+export function chunkLeaderboardAlert(detail: string, maximumLength = 3_400): string[] {
+  if (!Number.isInteger(maximumLength) || maximumLength <= 0) {
+    throw new Error("invalid leaderboard alert chunk length");
+  }
+  const chunks: string[] = [];
+  let remaining = detail;
+  while (remaining.length > maximumLength) {
+    let boundary = remaining.lastIndexOf("\n", maximumLength);
+    if (boundary <= 0) boundary = maximumLength;
+    chunks.push(remaining.slice(0, boundary));
+    remaining = remaining.slice(boundary);
+    if (remaining.startsWith("\n")) remaining = remaining.slice(1);
+  }
+  if (remaining.length > 0) chunks.push(remaining);
+  return chunks;
+}
+
+export function shouldAdvanceLeaderboardSnapshot(changeCount: number, allAlertsSent: boolean): boolean {
+  return changeCount === 0 || allAlertsSent;
+}
+
 export async function loadLeaderboardSnapshot(path: string): Promise<LeaderboardSnapshot | null> {
   try {
     return JSON.parse(await readFile(path, "utf8")) as LeaderboardSnapshot;
