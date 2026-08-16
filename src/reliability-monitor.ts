@@ -135,6 +135,7 @@ export function evaluateReliability(input: {
     if (
       input.sourceState.observedAt === null ||
       !Number.isFinite(input.sourceState.observedAt) ||
+      input.sourceState.observedAt > input.now + 60_000 ||
       input.now - input.sourceState.observedAt > 10 * 60_000
     ) {
       issues.push({ code: "source_observations_stale", detail: "authoritative source observations are older than ten minutes" });

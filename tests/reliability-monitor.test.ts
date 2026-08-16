@@ -121,4 +121,16 @@ describe("production reliability evaluation", () => {
     expect(evaluateReliability(value).map((issue) => issue.code))
       .toContain("source_observations_stale");
   });
+
+  it("rejects future-dated observations beyond the clock-skew allowance", () => {
+    const future = input();
+    future.sourceState.observedAt = NOW + 60_001;
+    expect(evaluateReliability(future).map((issue) => issue.code))
+      .toContain("source_observations_stale");
+
+    const tolerated = input();
+    tolerated.sourceState.observedAt = NOW + 60_000;
+    expect(evaluateReliability(tolerated).map((issue) => issue.code))
+      .not.toContain("source_observations_stale");
+  });
 });
