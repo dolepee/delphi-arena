@@ -73,8 +73,6 @@ for (const item of newlyOverdue) {
   const normalizedMarketAddress = item.marketAddress.toLowerCase();
   alerted.add(normalizedMarketAddress);
   overdueAlertsSent.push(normalizedMarketAddress);
-}
-if (overdueAlertsSent.length > 0) {
   await saveAlertedSettlementMarkets(markerPath, alerted);
 }
 process.stdout.write(`${JSON.stringify({
