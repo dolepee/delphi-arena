@@ -50,6 +50,22 @@ describe("chain-derived leaderboard", () => {
     expect(filtered.events.buys).toEqual(events.buys);
   });
 
+  it("accepts liquidation arrays as well as Goldsky comma-delimited scalars", () => {
+    const arrayLiquidation = {
+      ...events.liquidations[0]!,
+      outcomeIndices: ["1"],
+      sharesIn: ["20000000000000000000"],
+    };
+    expect(() => buildLeaderboard({
+      events: { ...events, liquidations: [arrayLiquidation] },
+      marks,
+      cashAtomicByWallet: new Map([[A, 935_000_000n], [B, 900_000_000n], [C, 1_005_000_000n]]),
+      convictionWallet: A,
+      initialTst: 1000,
+      observedAt: "2026-08-16T22:00:00.000Z",
+    })).not.toThrow();
+  });
+
   it("ranks current token balances plus reconstructed marked positions", () => {
     const snapshot = buildLeaderboard({
       events,

@@ -33,8 +33,8 @@ export interface RedemptionEvent {
 export interface LiquidationEvent {
   liquidator: string;
   marketProxy: string;
-  outcomeIndices: string;
-  sharesIn: string;
+  outcomeIndices: string | string[];
+  sharesIn: string | string[];
   totalTokensOut: string;
   timestamp_: string;
 }
@@ -106,12 +106,12 @@ async function graphQuery<T>(query: string, variables: Record<string, unknown> =
   return result.data;
 }
 
-async function paginate<T>(field: string, selection: string): Promise<T[]> {
+async function paginate<T>(field: string, selection: string, blockNumber: number): Promise<T[]> {
   const values: T[] = [];
   for (let skip = 0; ; skip += 1_000) {
     const data = await graphQuery<Record<string, T[]>>(
-      `query($first: Int!, $skip: Int!) { ${field}(first: $first, skip: $skip, orderBy: block_number, orderDirection: asc) { ${selection} } }`,
-      { first: 1_000, skip },
+      `query($first: Int!, $skip: Int!, $block: Int!) { ${field}(first: $first, skip: $skip, block: { number: $block }, orderBy: block_number, orderDirection: asc) { ${selection} } }`,
+      { first: 1_000, skip, block: blockNumber },
     );
     const page = data[field] ?? [];
     values.push(...page);
@@ -120,15 +120,16 @@ async function paginate<T>(field: string, selection: string): Promise<T[]> {
 }
 
 export async function loadCompetitionEvents(): Promise<CompetitionEvents> {
-  const [buys, sells, redemptions, liquidations, settlements, meta] = await Promise.all([
-    paginate<BuyEvent>("gatewayBuys", "buyer marketProxy outcomeIdx tokensIn sharesOut timestamp_"),
-    paginate<SellEvent>("gatewaySells", "seller marketProxy outcomeIdx tokensOut sharesIn timestamp_"),
-    paginate<RedemptionEvent>("gatewayRedemptions", "redeemer marketProxy sharesIn tokensOut timestamp_"),
-    paginate<LiquidationEvent>("gatewayLiquidations", "liquidator marketProxy outcomeIndices sharesIn totalTokensOut timestamp_"),
-    paginate<SettlementEvent>("gatewayMarketSettleds", "marketProxy winningOutcomeIdx"),
-    graphQuery<{ _meta: { block: { number: number } } }>("{ _meta { block { number } } }"),
+  const meta = await graphQuery<{ _meta: { block: { number: number } } }>("{ _meta { block { number } } }");
+  const blockNumber = meta._meta.block.number;
+  const [buys, sells, redemptions, liquidations, settlements] = await Promise.all([
+    paginate<BuyEvent>("gatewayBuys", "buyer marketProxy outcomeIdx tokensIn sharesOut timestamp_", blockNumber),
+    paginate<SellEvent>("gatewaySells", "seller marketProxy outcomeIdx tokensOut sharesIn timestamp_", blockNumber),
+    paginate<RedemptionEvent>("gatewayRedemptions", "redeemer marketProxy sharesIn tokensOut timestamp_", blockNumber),
+    paginate<LiquidationEvent>("gatewayLiquidations", "liquidator marketProxy outcomeIndices sharesIn totalTokensOut timestamp_", blockNumber),
+    paginate<SettlementEvent>("gatewayMarketSettleds", "marketProxy winningOutcomeIdx", blockNumber),
   ]);
-  return { buys, sells, redemptions, liquidations, settlements, blockNumber: meta._meta.block.number };
+  return { buys, sells, redemptions, liquidations, settlements, blockNumber };
 }
 
 export function filterEventsToCompetitionMarkets(
@@ -161,12 +162,16 @@ function positionKey(marketId: string, outcomeIndex: number): string {
   return `${normalizedAddress(marketId)}:${outcomeIndex}`;
 }
 
-function parseCsvBigInts(value: string): bigint[] {
-  return value.split(",").filter(Boolean).map((item) => BigInt(item.trim()));
+function scalarValues(value: string | string[]): string[] {
+  return Array.isArray(value) ? value : value.split(",");
 }
 
-function parseCsvNumbers(value: string): number[] {
-  return value.split(",").filter(Boolean).map((item) => Number(item.trim()));
+function parseCsvBigInts(value: string | string[]): bigint[] {
+  return scalarValues(value).filter(Boolean).map((item) => BigInt(item.trim()));
+}
+
+function parseCsvNumbers(value: string | string[]): number[] {
+  return scalarValues(value).filter(Boolean).map((item) => Number(item.trim()));
 }
 
 export function buildLeaderboard(input: {
