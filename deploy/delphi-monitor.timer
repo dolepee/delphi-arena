@@ -1,12 +1,12 @@
 [Unit]
-Description=Check Delphi Arena organizer funding every ten minutes
+Description=Check Delphi Arena production reliability every minute
 
 [Timer]
 OnBootSec=1min
-OnUnitActiveSec=10min
-RandomizedDelaySec=20s
+OnUnitActiveSec=1min
+RandomizedDelaySec=0
+AccuracySec=5s
 Persistent=true
 
 [Install]
 WantedBy=timers.target
-

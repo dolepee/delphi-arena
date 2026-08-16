@@ -15,7 +15,8 @@ describe("production systemd units", () => {
 
     expect(assess).toContain(`/usr/bin/flock -w 20 -E 0 ${sharedLock}`);
     expect(cycle).toContain(`/usr/bin/flock -n -E 0 ${sharedLock}`);
-    expect(event).toContain(`/usr/bin/flock -w 20 -E 0 ${sharedLock}`);
+    expect(event).toContain(`/usr/bin/flock -w 20 ${sharedLock}`);
+    expect(event).not.toContain("-E 0");
     expect(manage).toContain(`/usr/bin/flock -w 20 -E 0 ${sharedLock}`);
     expect(settle).toContain(`/usr/bin/flock -w 20 -E 0 ${sharedLock}`);
 
@@ -30,6 +31,13 @@ describe("production systemd units", () => {
     expect(timer).toContain("OnUnitActiveSec=15s");
     expect(timer).toContain("RandomizedDelaySec=0");
     expect(timer).toContain("AccuracySec=1s");
+  });
+
+  it("checks production reliability every minute without timer jitter", async () => {
+    const timer = await readFile(new URL("../deploy/delphi-monitor.timer", import.meta.url), "utf8");
+    expect(timer).toContain("OnUnitActiveSec=1min");
+    expect(timer).toContain("RandomizedDelaySec=0");
+    expect(timer).toContain("AccuracySec=5s");
   });
 
   it("checks newly listed markets every minute and fails them closed", async () => {
