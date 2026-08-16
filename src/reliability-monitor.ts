@@ -28,6 +28,11 @@ export interface ReliabilityIssue {
   detail: string;
 }
 
+export interface PendingIntentState {
+  id: string;
+  createdAt: number;
+}
+
 export function batchReliabilityIssues(
   issues: ReliabilityIssue[],
   maximumLength = 3_600,
@@ -96,8 +101,8 @@ export function evaluateReliability(input: {
   services: Map<string, ServiceState>;
   sourceState: SourceState;
   resultCapableMarketIds: string[];
-  pendingTradeId: string | null;
-  pendingExitId: string | null;
+  pendingTrade: PendingIntentState | null;
+  pendingExit: PendingIntentState | null;
   gasEth: number;
   minimumGasEth: number;
   releaseTarget: string;
@@ -151,16 +156,20 @@ export function evaluateReliability(input: {
       }
     }
   }
-  if (input.pendingTradeId) {
+  const intentIsStuck = (intent: PendingIntentState) =>
+    !Number.isFinite(intent.createdAt) ||
+    intent.createdAt > input.now + 60_000 ||
+    input.now - intent.createdAt > 2 * 60_000;
+  if (input.pendingTrade && intentIsStuck(input.pendingTrade)) {
     issues.push({
-      code: `pending_trade_intent:${input.pendingTradeId}`,
-      detail: `unresolved trade intent ${input.pendingTradeId}`,
+      code: `pending_trade_intent:${input.pendingTrade.id}`,
+      detail: `unresolved trade intent ${input.pendingTrade.id}`,
     });
   }
-  if (input.pendingExitId) {
+  if (input.pendingExit && intentIsStuck(input.pendingExit)) {
     issues.push({
-      code: `pending_exit_intent:${input.pendingExitId}`,
-      detail: `unresolved exit intent ${input.pendingExitId}`,
+      code: `pending_exit_intent:${input.pendingExit.id}`,
+      detail: `unresolved exit intent ${input.pendingExit.id}`,
     });
   }
   if (input.gasEth < input.minimumGasEth) {

@@ -46,7 +46,7 @@ ExecMainStartTimestamp=
 ExecMainExitTimestamp=
 InactiveEnterTimestamp=`;
 
-function input() {
+function input(): Parameters<typeof evaluateReliability>[0] {
   return {
     now: NOW,
     services: parseSystemdShow(SYSTEMD),
@@ -55,8 +55,8 @@ function input() {
       healthyMarketIds: new Set(["0xmarket"]),
     },
     resultCapableMarketIds: ["0xMarket"],
-    pendingTradeId: null,
-    pendingExitId: null,
+    pendingTrade: null,
+    pendingExit: null,
     gasEth: 0.01,
     minimumGasEth: 0.001,
     releaseTarget: BASELINE.releaseTarget,
@@ -87,8 +87,8 @@ describe("production reliability evaluation", () => {
     const issues = evaluateReliability({
       ...value,
       sourceState: { observedAt: NOW - 11 * 60_000, healthyMarketIds: new Set() },
-      pendingTradeId: "trade-1",
-      pendingExitId: "exit-1",
+      pendingTrade: { id: "trade-1", createdAt: NOW - 120_001 },
+      pendingExit: { id: "exit-1", createdAt: NOW - 120_001 },
       gasEth: 0.0001,
       releaseTarget: "/opt/delphi-arena/releases/drift",
       policyHash: "b".repeat(64),
@@ -129,6 +129,15 @@ describe("production reliability evaluation", () => {
     toleratedEvent.inactiveEnterAt = NOW + 60_000;
     expect(evaluateReliability(tolerated).map((issue) => issue.code))
       .not.toContain("unit_stale:delphi-event.service");
+  });
+
+  it("does not page on a normal freshly prepared intent", () => {
+    const value = input();
+    value.pendingTrade = { id: "trade-fresh", createdAt: NOW - 120_000 };
+    value.pendingExit = { id: "exit-fresh", createdAt: NOW - 5_000 };
+    const codes = evaluateReliability(value).map((issue) => issue.code);
+    expect(codes).not.toContain("pending_trade_intent:trade-fresh");
+    expect(codes).not.toContain("pending_exit_intent:exit-fresh");
   });
 
   it("fails stale-source validation closed on an unparseable timestamp", () => {
