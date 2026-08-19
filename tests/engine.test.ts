@@ -227,6 +227,7 @@ describe("guarded tournament execution", () => {
       now: () => Date.parse("2026-08-13T12:00:00.000Z"),
       readBook: vi.fn(async () => flatBook),
       preflightTournament: preflight,
+      exactResultExecutionEnabled: () => true,
     })).resolves.toEqual({
       status: "SKIPPED",
       reason: "post_approval_tournament_preflight:podium_target_not_cleared",
@@ -249,6 +250,7 @@ describe("guarded tournament execution", () => {
       now: () => Date.parse("2026-08-13T12:00:00.000Z"),
       readBook: vi.fn(async () => flatBook),
       preflightTournament: preflight,
+      exactResultExecutionEnabled: () => true,
     })).resolves.toEqual({
       status: "TRADED",
       transactionHash: `0x${"a".repeat(64)}`,
@@ -265,6 +267,97 @@ describe("guarded tournament execution", () => {
       plan.decisionId,
       `0x${"a".repeat(64)}`,
     );
+  });
+
+  it("fails closed before approval when exact-result execution is disabled", async () => {
+    const fixture = executionFixture();
+    const preflight = vi.fn(async () => ({ allowed: true } as TournamentPreflightResult));
+    await expect(executeQuotedPlan({
+      client: fixture.client as never,
+      plan,
+      policy: tournamentPolicy,
+      ledger: fixture.ledger,
+      now: () => Date.parse("2026-08-13T12:00:00.000Z"),
+      readBook: vi.fn(async () => flatBook),
+      preflightTournament: preflight,
+      exactResultExecutionEnabled: () => false,
+    })).resolves.toEqual({
+      status: "SKIPPED",
+      reason: "exact_result_execution_disabled",
+    });
+    expect(fixture.ledger.prepare).not.toHaveBeenCalled();
+    expect(fixture.client.ensureTokenApproval).not.toHaveBeenCalled();
+    expect(fixture.client.buyShares).not.toHaveBeenCalled();
+  });
+
+  it("discards PREPARED if exact-result execution is disabled during approval", async () => {
+    const fixture = executionFixture();
+    const preflight = vi.fn(async () => ({ allowed: true } as TournamentPreflightResult));
+    const exactResultExecutionEnabled = vi.fn()
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false);
+    await expect(executeQuotedPlan({
+      client: fixture.client as never,
+      plan,
+      policy: tournamentPolicy,
+      ledger: fixture.ledger,
+      now: () => Date.parse("2026-08-13T12:00:00.000Z"),
+      readBook: vi.fn(async () => flatBook),
+      preflightTournament: preflight,
+      exactResultExecutionEnabled,
+    })).resolves.toEqual({
+      status: "SKIPPED",
+      reason: "post_approval_exact_result_execution_disabled",
+    });
+    expect(fixture.ledger.prepare).toHaveBeenCalledOnce();
+    expect(fixture.ledger.discardPrepared).toHaveBeenCalledWith(plan.decisionId);
+    expect(fixture.client.buyShares).not.toHaveBeenCalled();
+  });
+
+  it("fails closed for an exact-result canary plan when no flag callback is provided", async () => {
+    const fixture = executionFixture();
+    const canaryPlan = { ...plan, mode: "canary" as const };
+    await expect(executeQuotedPlan({
+      client: fixture.client as never,
+      plan: canaryPlan,
+      policy: tournamentPolicy,
+      ledger: fixture.ledger,
+      now: () => Date.parse("2026-08-13T12:00:00.000Z"),
+      readBook: vi.fn(async () => flatBook),
+      preflightTournament: vi.fn(async () => ({ allowed: true } as TournamentPreflightResult)),
+    })).resolves.toEqual({
+      status: "SKIPPED",
+      reason: "exact_result_execution_disabled",
+    });
+    expect(fixture.ledger.prepare).not.toHaveBeenCalled();
+    expect(fixture.client.ensureTokenApproval).not.toHaveBeenCalled();
+    expect(fixture.client.buyShares).not.toHaveBeenCalled();
+  });
+
+  it("rechecks the exact-result flag at the final no-await boundary", async () => {
+    const fixture = executionFixture();
+    const preflight = vi.fn(async () => ({ allowed: true } as TournamentPreflightResult));
+    const exactResultExecutionEnabled = vi.fn()
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false);
+    await expect(executeQuotedPlan({
+      client: fixture.client as never,
+      plan,
+      policy: tournamentPolicy,
+      ledger: fixture.ledger,
+      now: () => Date.parse("2026-08-13T12:00:00.000Z"),
+      readBook: vi.fn(async () => flatBook),
+      preflightTournament: preflight,
+      exactResultExecutionEnabled,
+    })).resolves.toEqual({
+      status: "SKIPPED",
+      reason: "final_exact_result_execution_disabled",
+    });
+    expect(preflight).toHaveBeenCalledTimes(2);
+    expect(fixture.ledger.prepare).toHaveBeenCalledOnce();
+    expect(fixture.ledger.discardPrepared).toHaveBeenCalledWith(plan.decisionId);
+    expect(fixture.client.buyShares).not.toHaveBeenCalled();
   });
 
   it("blocks a replay even when a later quote would have a different decision ID", () => {

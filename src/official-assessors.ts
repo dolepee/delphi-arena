@@ -539,12 +539,32 @@ export async function firstSuccessfulAssessment<T>(
   return null;
 }
 
-function qualifyingGeminiModel(text: string): { name: string; version: number } | null {
+function literalWordsPattern(value: string): string {
+  return value.trim().split(/\s+/u)
+    .map((word) => word.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"))
+    .join("\\s+");
+}
+
+function qualifyingGeminiAction(text: string, modelName: string): boolean {
   // The contract requires an announcement *as available*. A generic model
-  // announcement, benchmark, or preview label is insufficient without an
-  // actual release/availability/access statement.
-  const releaseLanguage = /\b(?:launch(?:ed|ing)?|releas(?:e|ed|ing)|available|availability|(?:can|may) access|access (?:is|has been) (?:now )?(?:open|available)|rolling out)\b/iu;
-  const unreleasedLanguage = /\b(?:coming soon|available soon|roadmap|teaser|not yet available|future release|planned|plans? to|scheduled to|set to|will (?:launch|release|become available)|will be (?:launched|released|available)|waitlist only|next (?:week|month|quarter|year)|tomorrow|later this (?:week|month|quarter|year))\b/iu;
+  // announcement, question, expectation, or future plan is insufficient.
+  const statement = text.replace(/[’]/gu, "'").replace(/\s+/gu, " ").trim();
+  if (
+    statement.includes("?") ||
+    /\b(?:no date|not|never|cannot|can't|won't|isn't|aren't|hasn't|haven't|doesn't|don't|didn't|unable|fails?|failed|declines?|refuses?|den(?:y|ies|ied|ial)|disput(?:e|es|ed)|alleg(?:e|es|ed)|claims?|expect(?:s|ed|ing)?|slated|evaluat(?:e|es|ed|ing)|whether|candidate|reportedly|rumou?red|plans?|planned|scheduled|possibly|potentially|may|might|could|would|will|coming soon|available soon|not yet|yet to|future|waitlist|tomorrow|later|roadmap|teaser|concept|internal(?:ly)?|private(?:ly)?|employees?\s+only|planning\s+purposes|prototype|in\s+name\s+only|for\s+reference\s+only)\b/iu.test(statement)
+  ) return false;
+  const model = literalWordsPattern(modelName);
+  return [
+    new RegExp(`\\b${model}\\s+(?:is|has\\s+been|was)\\s+(?:(?:now|currently|officially|generally|publicly)\\s+){0,2}(?:available|released|launched|made\\s+available)\\b`, "iu"),
+    new RegExp(`\\b${model}\\s+(?:has\\s+)?(?:released|launched)\\b`, "iu"),
+    new RegExp(`\\b${model}\\s+is\\s+(?:now\\s+)?rolling\\s+out\\b`, "iu"),
+    new RegExp(`\\b(?:Google(?:\\s+DeepMind)?|we)\\s+(?:(?:has|have)\\s+)?(?:now\\s+)?(?:released|launched|made\\s+available)\\s+(?:the\\s+)?${model}\\b`, "iu"),
+    new RegExp(`\\b(?:you|developers?|users?|customers?)\\s+can\\s+(?:now\\s+)?(?:access|use|try)\\s+(?:the\\s+)?${model}\\b`, "iu"),
+    new RegExp(`\\baccess\\s+to\\s+(?:the\\s+)?${model}\\s+(?:is|has\\s+been)\\s+(?:now\\s+)?(?:available|open)\\b`, "iu"),
+  ].some((pattern) => pattern.test(statement));
+}
+
+function qualifyingGeminiModel(text: string): { name: string; version: number } | null {
   for (const match of text.matchAll(/\bGemini\s+([0-9]+(?:\.[0-9]+)?)\s+Pro\b/giu)) {
     const version = Number(match[1]);
     if (!Number.isFinite(version) || version < 3.5 || match.index === undefined) continue;
@@ -558,7 +578,7 @@ function qualifyingGeminiModel(text: string): { name: string; version: number } 
       .filter((index) => index >= 0);
     const nextBoundary = followingBoundaries.length > 0 ? Math.min(...followingBoundaries) : text.length;
     const context = text.slice(previousBoundary + 1, nextBoundary + 1);
-    if (unreleasedLanguage.test(context) || !releaseLanguage.test(context)) continue;
+    if (!qualifyingGeminiAction(context, match[0])) continue;
     return { name: match[0].replace(/\s+/gu, " "), version };
   }
   return null;
@@ -634,17 +654,152 @@ function officialRecordArtifact(block: string, sourceUrl: string): string | null
   return null;
 }
 
-function qualifyingUapRecord(text: string, artifactUrl: string | null): boolean {
-  if (!artifactUrl || !/\b(?:UAP|UFO|unidentified anomalous phenomena)\b/iu.test(text)) return false;
-  if (!/\b(?:records?|documents?|case reports?|mission reports?|images?|videos?|audio|data(?:set)?s?|files?|FOIA|declassif(?:y|ied|ication)|unredact(?:ed|ion))\b/iu.test(text)) return false;
-  if (!/\b(?:new(?:ly)? (?:released|published|posted|available|declassified|unredacted|disclosed|records?|documents?|files?)|releas(?:e|ed|ing) new|previously unreleased|for the first time|FOIA release|declassif(?:y|ied|ication)|unredact(?:ed|ion))\b/iu.test(text)) return false;
-  return !/\b(?:no new (?:records?|documents?|material)|does not release|previously (?:publicly )?released|already (?:public|available)|publicly available since|originally released|republication|republished|reposted|archived copy|unchanged from (?:an )?earlier release)\b/iu.test(text);
+interface ValidatedArtifact {
+  url: string;
+  valueHash: string;
 }
 
-export function assessUapRecordsRelease(input: TimestampedOfficialPage & {
+async function boundedResponseBytes(response: Response, maximumBytes = 4 * 1024 * 1024): Promise<Uint8Array | null> {
+  const declaredLength = Number(response.headers.get("content-length"));
+  if (response.status === 200 && Number.isFinite(declaredLength) && declaredLength > maximumBytes) return null;
+  const reader = response.body?.getReader();
+  if (!reader) return null;
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  try {
+    while (true) {
+      const item = await reader.read();
+      if (item.done) break;
+      if (!item.value || item.value.byteLength === 0) continue;
+      length += item.value.byteLength;
+      if (length > maximumBytes) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(item.value);
+    }
+  } catch {
+    return null;
+  }
+  if (length === 0) return null;
+  const body = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body;
+}
+
+function artifactSignatureIsValid(url: URL, contentType: string, body: Uint8Array): boolean {
+  const type = contentType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  const path = url.pathname.toLowerCase();
+  const textStart = new TextDecoder().decode(body.slice(0, Math.min(body.byteLength, 4_096))).trimStart();
+  if (path.endsWith(".pdf")) {
+    return (type === "application/pdf" || type === "application/octet-stream") && textStart.startsWith("%PDF-");
+  }
+  if (path.endsWith(".json")) {
+    if (!(type === "application/json" || type.endsWith("+json"))) return false;
+    try {
+      JSON.parse(new TextDecoder().decode(body));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  if (path.endsWith(".csv")) {
+    return ["text/csv", "text/plain", "application/octet-stream"].includes(type) && /[,\n]/u.test(textStart);
+  }
+  if (path.endsWith(".xml")) {
+    return ["application/xml", "text/xml", "application/octet-stream"].includes(type) && textStart.startsWith("<");
+  }
+  if (path.endsWith(".zip")) {
+    return ["application/zip", "application/x-zip-compressed", "application/octet-stream"].includes(type) &&
+      body[0] === 0x50 && body[1] === 0x4b;
+  }
+  if (/\.(?:mp4|mov|m4v)$/u.test(path)) {
+    return (type.startsWith("video/") || type === "application/octet-stream") &&
+      body.byteLength >= 12 && new TextDecoder().decode(body.slice(4, 8)) === "ftyp";
+  }
+  if (path.endsWith(".wav")) {
+    return (type.startsWith("audio/") || type === "application/octet-stream") &&
+      new TextDecoder().decode(body.slice(0, 4)) === "RIFF" && new TextDecoder().decode(body.slice(8, 12)) === "WAVE";
+  }
+  if (path.endsWith(".mp3")) {
+    return (type.startsWith("audio/") || type === "application/octet-stream") && (
+      new TextDecoder().decode(body.slice(0, 3)) === "ID3" || (body[0] === 0xff && (body[1] ?? 0) >= 0xe0)
+    );
+  }
+  if (path.endsWith(".png")) {
+    return (type === "image/png" || type === "application/octet-stream") &&
+      body[0] === 0x89 && new TextDecoder().decode(body.slice(1, 4)) === "PNG";
+  }
+  if (/\.jpe?g$/u.test(path)) {
+    return (type === "image/jpeg" || type === "application/octet-stream") && body[0] === 0xff && body[1] === 0xd8 && body[2] === 0xff;
+  }
+  if (/\.tiff?$/u.test(path)) {
+    const signature = new TextDecoder().decode(body.slice(0, 4));
+    return (type === "image/tiff" || type === "application/octet-stream") && (signature === "II*\u0000" || signature === "MM\u0000*");
+  }
+  return false;
+}
+
+async function validateOfficialArtifact(artifactUrl: string): Promise<ValidatedArtifact | null> {
+  const requested = parsedHttpsUrl(artifactUrl);
+  if (!requested || !isOfficialUapUrl(requested.toString())) return null;
+  try {
+    const response = await fetch(requested.toString(), {
+      headers: {
+        "user-agent": "Conviction-Delphi-Arena/1.0",
+        accept: "application/pdf,application/json,text/csv,application/xml,text/xml,application/zip,video/*,audio/*,image/*;q=0.9,application/octet-stream;q=0.8",
+        range: "bytes=0-1048575",
+      },
+      redirect: "follow",
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!response.ok || (response.status !== 200 && response.status !== 206)) return null;
+    const finalUrl = parsedHttpsUrl(response.url || requested.toString());
+    if (!finalUrl || finalUrl.origin !== requested.origin || !isOfficialUapUrl(finalUrl.toString())) return null;
+    const body = await boundedResponseBytes(response);
+    if (!body || !artifactSignatureIsValid(finalUrl, response.headers.get("content-type") ?? "", body)) return null;
+    return {
+      url: finalUrl.toString(),
+      valueHash: createHash("sha256").update(body).digest("hex"),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function qualifyingUapRecord(text: string, artifactUrl: string | null): boolean {
+  if (!artifactUrl) return false;
+  const statement = text.replace(/[’]/gu, "'")
+    .replace(/\bnot previously (?:made )?(?:public|released|available|disclosed)\b/giu, "previously unreleased")
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (
+    statement.includes("?") ||
+    /\b(?:no new|not|never|cannot|can't|won't|didn't|doesn't|hasn't|haven't|unable|fails?|failed|declines?|refuses?|den(?:y|ies|ied|ial)|disput(?:e|es|ed)|expect(?:s|ed|ing)?|slated|evaluat(?:e|es|ed|ing)|whether|candidate|reportedly|rumou?red|alleg(?:e|es|ed)|claims?|plans?|planned|scheduled|possible|possibly|potential|may|might|could|would|will|not yet|yet to|future|placeholder|draft|tomorrow|later|routine status|guidance|procedures?|polic(?:y|ies)|FAQ|index|summary|request\s+forms?|navigation|catalog|republication|republished|reposted|archived copy|unchanged|already public|previously released|withheld|unpublished|restricted|internal(?:ly)?|private(?:ly)?)\b/iu.test(statement)
+  ) return false;
+  const actor = String.raw`(?:AARO|ODNI|(?:the\s+)?All-domain\s+Anomaly\s+Resolution\s+Office|(?:the\s+)?Office\s+of\s+the\s+Director\s+of\s+National\s+Intelligence)`;
+  const novelty = String.raw`(?:new|additional|newly\s+(?:released|published|posted|available|declassified|unredacted|disclosed)|previously\s+unreleased)`;
+  const subject = String.raw`(?:UAP|UFO|unidentified\s+anomalous\s+phenomena)(?:\s+(?:case|mission|incident|case\s+resolution)){0,2}`;
+  const material = String.raw`(?:records?|documents?|reports?|files?|images?|videos?|audio(?:\s+files?)?|data(?:sets?)?)`;
+  const object = String.raw`(?:(?:${novelty})\s+)+(?:${subject})\s+(?:${material})`;
+  const completedAction = String.raw`(?:released|published|posted|made\s+(?:publicly\s+)?available|declassified|unredacted|disclosed)`;
+  const cleanEnd = String.raw`(?:\s+for\s+(?:public\s+)?(?:access|download))?(?=\s*(?:[.,;:!)]|$))`;
+  return [
+    new RegExp(`\\b${actor}\\s+(?:(?:has|have)\\s+)?(?:now\\s+)?${completedAction}\\s+(?:(?:one\\s+or\\s+more|an?|the|these)\\s+)*${object}\\b${cleanEnd}`, "iu"),
+    new RegExp(`\\b${object}\\s+(?:has|have|was|were)\\s+(?:now\\s+)?(?:been\\s+)?${completedAction}\\s+(?:by|through)\\s+${actor}\\b`, "iu"),
+    new RegExp(`\\b${object}\\s+(?:is|are|has\\s+been|have\\s+been)\\s+(?:now\\s+)?(?:publicly\\s+)?available\\s+(?:from|through|on)\\s+${actor}\\b`, "iu"),
+    new RegExp(`^New\\s+Content\\s+${object}\\b(?=\\s*(?:Government\\s+records\\b|[.,;:!)]|$))`, "iu"),
+  ].some((pattern) => pattern.test(statement));
+}
+
+export async function assessUapRecordsRelease(input: TimestampedOfficialPage & {
   market: MarketView;
   now: number;
-}): Assessment | null {
+}): Promise<Assessment | null> {
   const closeAt = openYesNoMarket(input.market, input.now);
   if (
     !UAP_RECORDS_RELEASE_PATTERN.test(input.market.question) ||
@@ -653,6 +808,10 @@ export function assessUapRecordsRelease(input: TimestampedOfficialPage & {
     !isFreshPage(input)
   ) return null;
 
+  const qualifyingCandidates: Array<{
+    artifactUrl: string;
+    publishedAt: number;
+  }> = [];
   for (const candidate of evidenceCandidates(input.body)) {
     if (
       candidate.publishedAt < UAP_RECORDS_WINDOW_START ||
@@ -662,10 +821,24 @@ export function assessUapRecordsRelease(input: TimestampedOfficialPage & {
     ) continue;
     const artifactUrl = officialRecordArtifact(candidate.body, input.sourceUrl);
     if (!qualifyingUapRecord(decodedText(candidate.body), artifactUrl)) continue;
-    return resultAssessment({
+    qualifyingCandidates.push({ artifactUrl: artifactUrl!, publishedAt: candidate.publishedAt });
+  }
+  const candidates = qualifyingCandidates.slice(0, 3);
+  const artifacts = await Promise.all(candidates.map((candidate) => validateOfficialArtifact(candidate.artifactUrl)));
+  for (const [index, artifact] of artifacts.entries()) {
+    if (!artifact) continue;
+    const candidate = candidates[index]!;
+    const assessment = resultAssessment({
       ...input,
       rationale: `An official AARO/ODNI entry timestamped ${new Date(candidate.publishedAt).toISOString()} releases a previously unavailable UAP record artifact on the same official service. This irreversibly satisfies YES within the Aug 10-21 window.`,
     });
+    assessment?.sources.push({
+      url: artifact.url,
+      kind: "authoritative",
+      observedAt: new Date(input.now).toISOString(),
+      valueHash: artifact.valueHash,
+    });
+    return assessment;
   }
   return null;
 }

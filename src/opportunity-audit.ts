@@ -3,6 +3,7 @@ import { findQuotedPlan } from "./quote-plan.js";
 import type { Assessment, Candidate, Policy } from "./model.js";
 import type { Book } from "./runtime.js";
 import type { OpportunityDefinition } from "./opportunity-policy.js";
+import { maximumAdditionalShares, orderBudget } from "./planner.js";
 
 export {
   allowedOpportunityAssessments,
@@ -70,16 +71,15 @@ async function quoteCapacity(input: {
     existingPortfolioValue,
     existingPortfolioShares: input.positions.reduce((total, position) => total + position.shares, 0),
   };
-  const marketRoom = input.book.totalEquityTst * input.policy.maximumPublishedResultMarketAllocationPct / 100 -
-    candidate.existingMarketValue;
-  const portfolioRoom = input.book.totalEquityTst * input.policy.maximumPublishedResultPortfolioAllocationPct / 100 -
-    existingPortfolioValue;
-  const budgetTst = Math.max(0, Math.min(
-    input.availableTst,
-    input.policy.maximumPublishedResultOrderTst,
-    marketRoom,
-    portfolioRoom,
-  ));
+  const budgetTst = orderBudget({
+    policy: input.policy,
+    assessment,
+    totalEquityTst: input.book.totalEquityTst,
+    availableTst: input.availableTst,
+    deployedValueTst: existingPortfolioValue,
+    existingMarketValueTst: candidate.existingMarketValue,
+    mode: "full",
+  });
   const plan = await findQuotedPlan({
     client: input.client,
     candidate,
@@ -87,6 +87,14 @@ async function quoteCapacity(input: {
     budgetTst,
     mode: "full",
     totalEquityTst: input.book.totalEquityTst,
+    maximumShares: maximumAdditionalShares({
+      policy: input.policy,
+      assessment,
+      totalEquityTst: input.book.totalEquityTst,
+      positions: input.positions,
+      marketId: input.market.id,
+      mode: "full",
+    }),
     maximumAttempts: 10,
   });
   return { executable: plan !== null, reason: plan ? null : "edge, impact, allocation, or liquidity", plan };

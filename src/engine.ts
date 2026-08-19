@@ -1,7 +1,13 @@
 import type { DelphiClient } from "@gensyn-ai/gensyn-delphi-sdk";
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { EXPECTED_WALLET, loadAssessmentContext, loadPolicy, stateDirectory } from "./config.js";
+import {
+  EXPECTED_WALLET,
+  eventExecutionEnabled,
+  loadAssessmentContext,
+  loadPolicy,
+  stateDirectory,
+} from "./config.js";
 import { TradeLedger, type TradeRecord } from "./ledger.js";
 import { isDeterministicPublishedResult, maximumAdditionalShares, maximumPriceImpact, orderBudget, rankQuotedPlans, selectCandidates } from "./planner.js";
 import { findQuotedPlan } from "./quote-plan.js";
@@ -285,6 +291,7 @@ export async function executeQuotedPlan(input: {
   now?: () => number;
   readBook: () => Promise<Book>;
   preflightTournament: (book: Book) => Promise<TournamentPreflightResult>;
+  exactResultExecutionEnabled?: () => boolean;
 }): Promise<QuotedPlanExecutionResult> {
   const now = input.now ?? Date.now;
   if (!isPlanExecutableAt(
@@ -297,8 +304,12 @@ export async function executeQuotedPlan(input: {
     return { status: "SKIPPED", reason: "decision_already_recorded" };
   }
 
-  const tournamentExact = input.plan.mode === "full" &&
-    isDeterministicPublishedResult(input.plan.assessment);
+  const exactResultPlan = isDeterministicPublishedResult(input.plan.assessment);
+  const tournamentExact = input.plan.mode === "full" && exactResultPlan;
+  const exactResultExecutionEnabled = input.exactResultExecutionEnabled ?? (() => false);
+  if (exactResultPlan && !exactResultExecutionEnabled()) {
+    return { status: "SKIPPED", reason: "exact_result_execution_disabled" };
+  }
   const freshBook = await input.readBook();
   if (!isPlanWithinBookLimits({ plan: input.plan, policy: input.policy, book: freshBook })) {
     return { status: "SKIPPED", reason: "fresh_book_limits" };
@@ -338,6 +349,10 @@ export async function executeQuotedPlan(input: {
     approveAmount: maximumCost,
   });
   try {
+    if (exactResultPlan && !exactResultExecutionEnabled()) {
+      await input.ledger.discardPrepared(input.plan.decisionId);
+      return { status: "SKIPPED", reason: "post_approval_exact_result_execution_disabled" };
+    }
     const postApprovalBook = await input.readBook();
     if (!isPlanWithinBookLimits({
       plan: input.plan,
@@ -380,6 +395,11 @@ export async function executeQuotedPlan(input: {
     return { status: "SKIPPED", reason: `post_approval_preflight:${String(error)}` };
   }
 
+  if (exactResultPlan && !exactResultExecutionEnabled()) {
+    await input.ledger.discardPrepared(input.plan.decisionId);
+    return { status: "SKIPPED", reason: "final_exact_result_execution_disabled" };
+  }
+
   // A submitted buy failure is intentionally not caught: the PREPARED record
   // remains until its chain state is reconciled.
   const result = await input.client.buyShares({
@@ -420,14 +440,15 @@ export async function runTradingCycle(client: DelphiClient, now = Date.now()) {
     }),
     exits: confirmedExits,
     now,
-  }).filter((candidate) =>
-    !isDeterministicPublishedResult(candidate.assessment) ||
-    !hasConfirmedExactResultExecution({
+  }).filter((candidate) => {
+    if (!isDeterministicPublishedResult(candidate.assessment)) return true;
+    if (!eventExecutionEnabled()) return false;
+    return !hasConfirmedExactResultExecution({
       records: tradeRecords,
       marketId: candidate.market.id,
       outcomeIndex: candidate.assessment.outcomeIndex,
-    })
-  );
+    });
+  });
   if (candidates.length === 0) return { status: "NO_TRADE" as const, reason: "no fresh evidence-backed edge" };
 
   const mode = await assertWriteReadiness({ now, policy, book });
@@ -445,6 +466,7 @@ export async function runTradingCycle(client: DelphiClient, now = Date.now()) {
         policy,
         book: freshBook,
       }),
+      exactResultExecutionEnabled: eventExecutionEnabled,
     });
     if (execution.status === "SKIPPED") {
       quoteFailures.push(`${plan.market.id}:${execution.reason}`);

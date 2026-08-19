@@ -2,8 +2,9 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { Assessment } from "../src/model.js";
+import type { Assessment, Policy } from "../src/model.js";
 import {
+  auditOpportunities,
   isAssessmentAllowedByOpportunity,
   loadOpportunities,
   type OpportunityDefinition,
@@ -124,5 +125,47 @@ describe("opportunity definitions", () => {
       ...assessment,
       outcomeIndex: 1,
     }, definitions)).toBe(true);
+  });
+
+  it("reports tournament-sized exact-result capacity instead of the legacy 850 TST cap", async () => {
+    const policy = {
+      competitionEndsAt: "2026-08-23T23:59:00.000Z", minimumStartingTst: 1000, minimumGasEth: 0.001,
+      minimumNetEdge: 0.08, minimumPublishedResultNetEdge: 0.02, minimumOfficialScheduleNetEdge: 0.04,
+      maximumMarketAllocationPct: 35, maximumPortfolioAllocationPct: 90, maximumOrderTst: 250,
+      maximumPublishedResultMarketAllocationPct: 85, maximumPublishedResultPortfolioAllocationPct: 95,
+      maximumPublishedResultOrderTst: 850, minimumFullOrderTst: 5, maximumPriceImpact: 0.04,
+      maximumPublishedResultPriceImpact: 0.2, slippagePct: 2, maximumNewTradesPerCycle: 1,
+      minimumEvidenceSources: 1, maximumAssessmentAgeMinutes: 30, canaryMaximumTst: 1,
+      qualificationFallback: "none", maximumTournamentExactResultOrderTst: 1350,
+      maximumTournamentEquityAllocationPct: 95, minimumTournamentPodiumBufferTst: 300,
+      maximumTournamentLeaderboardAgeSeconds: 45, maximumTournamentQuoteAgeSeconds: 15,
+    } satisfies Policy;
+    const market = {
+      id: assessment.marketId,
+      question: "Will the exact official result be YES?",
+      outcomes: ["Yes", "No"],
+      status: "open",
+      resolvesAt: "2026-08-21T14:00:00.000Z",
+      prices: [0.1, 0.9],
+      tradingFeePct: 0.5,
+      dataSources: [],
+    } as const;
+    const result = await auditOpportunities({
+      client: {
+        quoteBuy: async ({ sharesOut }: { sharesOut: bigint }) => ({
+          tokensIn: BigInt(Math.ceil(Number(sharesOut) / 1e18 * 0.2 * 1e6)),
+        }),
+      } as never,
+      book: {
+        rawMarkets: [], rawPositions: [], markets: [market], positions: [],
+        availableTst: 1422.528949, deployedValueTst: 0, totalEquityTst: 1422.528949, gasEth: 1,
+      } as never,
+      policy,
+      definitions: [definition("partial_result")],
+      now: Date.parse("2026-08-19T14:00:00.000Z"),
+    });
+    const live = result.rows[0]?.outcomes?.[0]?.live;
+    expect(live && "maximumCostTst" in live ? live.maximumCostTst : 0).toBeGreaterThan(850);
+    expect(live && "maximumCostTst" in live ? live.maximumCostTst : Infinity).toBeLessThanOrEqual(1350);
   });
 });
