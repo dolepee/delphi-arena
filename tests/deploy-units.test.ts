@@ -64,6 +64,19 @@ describe("production systemd units", () => {
     expect(timer).toContain("Persistent=true");
   });
 
+  it("refreshes the lightweight official podium threshold every ten seconds", async () => {
+    const [service, timer] = await Promise.all([
+      readFile(new URL("../deploy/delphi-podium.service", import.meta.url), "utf8"),
+      readFile(new URL("../deploy/delphi-podium.timer", import.meta.url), "utf8"),
+    ]);
+    expect(service).toContain("npm run podium-monitor");
+    expect(service).not.toContain(sharedLock);
+    expect(service).toContain("ReadWritePaths=/var/lib/delphi-arena");
+    expect(timer).toContain("OnUnitActiveSec=10s");
+    expect(timer).toContain("RandomizedDelaySec=0");
+    expect(timer).toContain("Persistent=false");
+  });
+
   it("runs position management after the settlement sweep", async () => {
     const timer = await readFile(
       new URL("../deploy/delphi-manage.timer", import.meta.url),

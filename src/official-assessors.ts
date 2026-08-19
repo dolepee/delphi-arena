@@ -36,6 +36,205 @@ const MISSISSIPPI_CALIBRATION_HASH = "5fa025c5d50acbeed43ee9293b0ad169073cdd964e
 const TOKYO_TEMPERATURE_PATTERN = /Tokyo's highest temperature on Aug 15, 2026.*above 31\.5 °C/iu;
 const TOKYO_AMEDAS_STATION = "44132";
 const TOKYO_OBSERVATION_START = Date.parse("2026-08-14T22:00:00.000Z");
+const GEMINI_PRO_RELEASE_PATTERN = /Google release a model called Gemini 3\.5 Pro or later by 03:59 UTC on Aug 21, 2026/iu;
+const GOOGLE_DEEPMIND_BLOG_URL = "https://blog.google/technology/google-deepmind/";
+const GOOGLE_GEMINI_MODELS_URL = "https://deepmind.google/models/gemini/";
+const GEMINI_MODELS_NEGATIVE_BASELINE_OBSERVED_AT = Date.parse("2026-08-19T15:45:45.000Z");
+// SHA-256 of the canonical baseline record
+// `URL|observedAt|3.5 Pro coming soon`. The bounded semantic record avoids
+// unstable asset/build hashes while freezing the official negative state.
+const GEMINI_MODELS_NEGATIVE_BASELINE_HASH = "598e1f22f912713a90118c4b5635ab34c98b8cbe37853b871547dfe47e678523";
+const UAP_RECORDS_RELEASE_PATTERN = /AARO or ODNI publicly release previously unreleased UAP records between Aug 10 00:00 and Aug 21 14:00 UTC 2026/iu;
+const UAP_RECORDS_WINDOW_START = Date.parse("2026-08-10T00:00:00.000Z");
+const AARO_CASES_REPORTS_URL = "https://www.aaro.mil/Resources/Cases-Reports/";
+const ODNI_REPORTS_URL = "https://www.dni.gov/index.php/newsroom/reports-publications";
+const ODNI_REDIRECT_URL = "https://www.odni.gov/newsroom/";
+const OFFICIAL_PAGE_MAX_AGE = 15 * 60_000;
+
+interface TimestampedOfficialPage {
+  body: string;
+  sourceUrl: string;
+  sourceObservedAt: number;
+  sourceRequestedUrl?: string;
+  sourceRootUrl?: string;
+  sourceRootHash?: string;
+}
+
+function decodedText(value: string): string {
+  return value
+    .replace(/<script\b(?![^>]*application\/ld\+json)[^>]*>[\s\S]*?<\/script>/giu, " ")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/giu, " ")
+    .replace(/&(?:nbsp|#160);/giu, " ")
+    .replace(/&(?:amp|#38);/giu, "&")
+    .replace(/&(?:quot|#34);/giu, "\"")
+    .replace(/&(?:apos|#39);/giu, "'")
+    .replace(/&#x27;/giu, "'")
+    .replace(/<[^>]+>/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+function evidenceBlocks(body: string): string[] {
+  const articles = [...body.matchAll(/<article\b[^>]*>[\s\S]*?<\/article>/giu)].map((match) => match[0]);
+  const rows = [...body.matchAll(/<tr\b[^>]*>[\s\S]*?<\/tr>/giu)].map((match) => match[0]);
+  const uapRowStarts = [...body.matchAll(/<div\b(?=[^>]*\bclass=["'][^"']*\buap-row\b[^"']*["'])(?=[^>]*\brole=["']row["'])[^>]*>/giu)];
+  const uapRows = uapRowStarts.map((match, index) => {
+    const start = match.index ?? 0;
+    const nextStart = uapRowStarts[index + 1]?.index ?? body.length;
+    const candidate = body.slice(start, nextStart);
+    const closing = /<\/div>\s*<\/div>/iu.exec(candidate);
+    const end = closing ? closing.index + closing[0].length : candidate.length;
+    return `New Content ${candidate.slice(0, end)}`;
+  });
+  const blocks = [...articles, ...uapRows, ...rows];
+  return blocks.length > 0 ? blocks : [body];
+}
+
+function publicationTimes(value: string): number[] {
+  const metadataTimestamps = [
+    ...[...value.matchAll(/["']datePublished["']\s*:\s*["']([^"']+)["']/giu)].map((match) => match[1]),
+    ...[...value.matchAll(/(?:property|name)=["'](?:article:published_time|published_time)["'][^>]*content=["']([^"']+)["']/giu)].map((match) => match[1]),
+    ...[...value.matchAll(/content=["']([^"']+)["'][^>]*(?:property|name)=["'](?:article:published_time|published_time)["']/giu)].map((match) => match[1]),
+    ...[...value.matchAll(/data-(?:published|release)-at=["']([^"']+)["']/giu)].map((match) => match[1]),
+  ];
+  const timestamps = metadataTimestamps.length > 0
+    ? metadataTimestamps
+    : [...value.matchAll(/<time\b[^>]*datetime=["']([^"']+)["']/giu)].map((match) => match[1]);
+  return [...new Set(timestamps.map((timestamp) => Date.parse(timestamp ?? "")).filter(Number.isFinite))];
+}
+
+function evidenceCandidates(body: string): Array<{ body: string; publishedAt: number }> {
+  const blocks = evidenceBlocks(body);
+  const documentTimes = publicationTimes(body);
+  return blocks.flatMap((block) => {
+    const localTimes = publicationTimes(block);
+    // A detail page commonly keeps datePublished in head JSON-LD and the
+    // release copy in one article. Do not share a document timestamp across a
+    // multi-card/list page because that could join unrelated claims.
+    const times = blocks.length === 1 ? documentTimes : localTimes;
+    return times.map((publishedAt) => ({ body: block, publishedAt }));
+  });
+}
+
+function isFreshPage(input: TimestampedOfficialPage & { now: number }): boolean {
+  return Number.isFinite(input.sourceObservedAt) &&
+    input.sourceObservedAt <= input.now &&
+    input.sourceObservedAt >= input.now - OFFICIAL_PAGE_MAX_AGE;
+}
+
+function parsedHttpsUrl(value: string): URL | null {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.username === "" && url.password === "" ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+function isOfficialGeminiUrl(value: string): boolean {
+  const url = parsedHttpsUrl(value);
+  if (!url) return false;
+  const hostname = url.hostname.toLowerCase();
+  if (hostname === "deepmind.google") {
+    return url.pathname.startsWith("/models/gemini/") || url.pathname.startsWith("/blog/");
+  }
+  if (hostname !== "blog.google") return false;
+  return url.pathname.startsWith("/technology/google-deepmind/") ||
+    url.pathname.startsWith("/innovation-and-ai/models-and-research/gemini-models/");
+}
+
+function isOfficialUapUrl(value: string): boolean {
+  const url = parsedHttpsUrl(value);
+  if (!url) return false;
+  const hostname = url.hostname.toLowerCase();
+  if (hostname === "aaro.mil" || hostname === "www.aaro.mil") {
+    return /^\/(?:UAP-Records|UAP-Cases|Resources\/Cases-Reports|Portals\/136)\//iu.test(url.pathname);
+  }
+  if (hostname === "dni.gov" || hostname === "www.dni.gov") {
+    return url.pathname.startsWith("/index.php/newsroom/reports-publications") || url.pathname.startsWith("/files/");
+  }
+  if (hostname !== "odni.gov" && hostname !== "www.odni.gov") return false;
+  return url.pathname.startsWith("/newsroom/") || url.pathname.startsWith("/files/");
+}
+
+function sameUrl(left: string, right: string): boolean {
+  const leftUrl = parsedHttpsUrl(left);
+  const rightUrl = parsedHttpsUrl(right);
+  if (!leftUrl || !rightUrl) return false;
+  return leftUrl.origin === rightUrl.origin && leftUrl.pathname === rightUrl.pathname && leftUrl.search === rightUrl.search;
+}
+
+function isNamedUapPage(input: Pick<TimestampedOfficialPage, "sourceUrl" | "sourceRequestedUrl" | "sourceRootUrl" | "sourceRootHash">): boolean {
+  const rootUrl = input.sourceRootUrl ?? input.sourceRequestedUrl ?? input.sourceUrl;
+  if (sameUrl(rootUrl, AARO_CASES_REPORTS_URL)) {
+    const url = parsedHttpsUrl(input.sourceUrl);
+    if (!isOfficialUapUrl(input.sourceUrl) || (url?.hostname !== "aaro.mil" && url?.hostname !== "www.aaro.mil")) return false;
+    return sameUrl(input.sourceUrl, AARO_CASES_REPORTS_URL) || (
+      sameUrl(input.sourceRootUrl ?? "", AARO_CASES_REPORTS_URL) &&
+      /^[0-9a-f]{64}$/u.test(input.sourceRootHash ?? "")
+    );
+  }
+  if (!sameUrl(rootUrl, ODNI_REPORTS_URL)) return false;
+  if (!isOfficialUapUrl(input.sourceUrl)) return false;
+  if (sameUrl(input.sourceUrl, ODNI_REPORTS_URL)) return true;
+  return sameUrl(input.sourceRootUrl ?? "", ODNI_REPORTS_URL) &&
+    /^[0-9a-f]{64}$/u.test(input.sourceRootHash ?? "") &&
+    (sameUrl(input.sourceUrl, ODNI_REDIRECT_URL) || input.sourceRequestedUrl !== undefined);
+}
+
+function openYesNoMarket(market: MarketView, now: number): number | null {
+  const closeAt = Date.parse(market.resolvesAt ?? "");
+  if (
+    !Number.isFinite(closeAt) ||
+    now >= closeAt ||
+    market.status.toLowerCase() !== "open" ||
+    !/^yes$/iu.test(market.outcomes[0] ?? "") ||
+    !/^no$/iu.test(market.outcomes[1] ?? "")
+  ) return null;
+  return closeAt;
+}
+
+function resultAssessment(input: TimestampedOfficialPage & {
+  market: MarketView;
+  now: number;
+  rationale: string;
+}): Assessment | null {
+  const closeAt = openYesNoMarket(input.market, input.now);
+  if (closeAt === null || !isFreshPage(input)) return null;
+  const expiresAt = Math.min(input.now + 5 * 60_000, closeAt);
+  if (expiresAt <= input.now) return null;
+  const sources: Assessment["sources"] = [{
+    url: input.sourceUrl,
+    kind: "authoritative",
+    observedAt: new Date(input.sourceObservedAt).toISOString(),
+    valueHash: createHash("sha256").update(input.body).digest("hex"),
+  }];
+  if (
+    input.sourceRootUrl &&
+    input.sourceRootHash &&
+    !sameUrl(input.sourceRootUrl, input.sourceUrl) &&
+    /^[0-9a-f]{64}$/u.test(input.sourceRootHash)
+  ) {
+    sources.push({
+      url: input.sourceRootUrl,
+      kind: "authoritative",
+      observedAt: new Date(input.sourceObservedAt).toISOString(),
+      valueHash: input.sourceRootHash,
+    });
+  }
+  return {
+    marketId: input.market.id,
+    outcomeIndex: 0,
+    evidenceClass: "published_result",
+    probability: 0.99,
+    confidence: "high",
+    status: "actionable",
+    observedAt: new Date(input.now).toISOString(),
+    expiresAt: new Date(expiresAt).toISOString(),
+    rationale: input.rationale,
+    sources,
+  };
+}
 
 interface NycExecutiveOrderResult {
   link?: unknown;
@@ -336,6 +535,310 @@ export async function firstSuccessfulAssessment<T>(
     } catch {
       continue;
     }
+  }
+  return null;
+}
+
+function literalWordsPattern(value: string): string {
+  return value.trim().split(/\s+/u)
+    .map((word) => word.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"))
+    .join("\\s+");
+}
+
+function qualifyingGeminiAction(text: string, modelName: string): boolean {
+  // The contract requires an announcement *as available*. A generic model
+  // announcement, question, expectation, or future plan is insufficient.
+  const statement = text.replace(/[’]/gu, "'").replace(/\s+/gu, " ").trim();
+  if (
+    statement.includes("?") ||
+    /\b(?:no date|not|never|cannot|can't|won't|isn't|aren't|hasn't|haven't|doesn't|don't|didn't|unable|fails?|failed|declines?|refuses?|den(?:y|ies|ied|ial)|disput(?:e|es|ed)|alleg(?:e|es|ed)|claims?|expect(?:s|ed|ing)?|slated|evaluat(?:e|es|ed|ing)|whether|candidate|reportedly|rumou?red|plans?|planned|scheduled|possibly|potentially|may|might|could|would|will|coming soon|available soon|not yet|yet to|future|waitlist|tomorrow|later|roadmap|teaser|concept|internal(?:ly)?|private(?:ly)?|employees?\s+only|planning\s+purposes|prototype|in\s+name\s+only|for\s+reference\s+only)\b/iu.test(statement)
+  ) return false;
+  const model = literalWordsPattern(modelName);
+  return [
+    new RegExp(`\\b${model}\\s+(?:is|has\\s+been|was)\\s+(?:(?:now|currently|officially|generally|publicly)\\s+){0,2}(?:available|released|launched|made\\s+available)\\b`, "iu"),
+    new RegExp(`\\b${model}\\s+(?:has\\s+)?(?:released|launched)\\b`, "iu"),
+    new RegExp(`\\b${model}\\s+is\\s+(?:now\\s+)?rolling\\s+out\\b`, "iu"),
+    new RegExp(`\\b(?:Google(?:\\s+DeepMind)?|we)\\s+(?:(?:has|have)\\s+)?(?:now\\s+)?(?:released|launched|made\\s+available)\\s+(?:the\\s+)?${model}\\b`, "iu"),
+    new RegExp(`\\b(?:you|developers?|users?|customers?)\\s+can\\s+(?:now\\s+)?(?:access|use|try)\\s+(?:the\\s+)?${model}\\b`, "iu"),
+    new RegExp(`\\baccess\\s+to\\s+(?:the\\s+)?${model}\\s+(?:is|has\\s+been)\\s+(?:now\\s+)?(?:available|open)\\b`, "iu"),
+  ].some((pattern) => pattern.test(statement));
+}
+
+function qualifyingGeminiModel(text: string): { name: string; version: number } | null {
+  for (const match of text.matchAll(/\bGemini\s+([0-9]+(?:\.[0-9]+)?)\s+Pro\b/giu)) {
+    const version = Number(match[1]);
+    if (!Number.isFinite(version) || version < 3.5 || match.index === undefined) continue;
+    const previousBoundary = Math.max(
+      text.lastIndexOf(".", match.index),
+      text.lastIndexOf("!", match.index),
+      text.lastIndexOf("?", match.index),
+    );
+    const followingBoundaries = [".", "!", "?"]
+      .map((boundary) => text.indexOf(boundary, match.index + match[0].length))
+      .filter((index) => index >= 0);
+    const nextBoundary = followingBoundaries.length > 0 ? Math.min(...followingBoundaries) : text.length;
+    const context = text.slice(previousBoundary + 1, nextBoundary + 1);
+    if (!qualifyingGeminiAction(context, match[0])) continue;
+    return { name: match[0].replace(/\s+/gu, " "), version };
+  }
+  return null;
+}
+
+export function assessGeminiProRelease(input: TimestampedOfficialPage & {
+  market: MarketView;
+  now: number;
+}): Assessment | null {
+  const closeAt = openYesNoMarket(input.market, input.now);
+  if (
+    !GEMINI_PRO_RELEASE_PATTERN.test(input.market.question) ||
+    closeAt === null ||
+    !isOfficialGeminiUrl(input.sourceUrl) ||
+    !isFreshPage(input)
+  ) return null;
+
+  for (const candidate of evidenceCandidates(input.body)) {
+    if (
+      candidate.publishedAt >= closeAt ||
+      candidate.publishedAt > input.now ||
+      candidate.publishedAt > input.sourceObservedAt
+    ) continue;
+    const model = qualifyingGeminiModel(decodedText(candidate.body));
+    if (!model) continue;
+    return resultAssessment({
+      ...input,
+      rationale: `Google's official release record, published ${new Date(candidate.publishedAt).toISOString()}, names ${model.name} (numeric version ${model.version}) as launched, released, or actually available. This irreversibly satisfies the market's YES condition before its close.`,
+    });
+  }
+
+  // The organizer also names the undated model catalog. A positive catalog
+  // state is actionable only because a frozen Aug 19 observation proves that
+  // this exact page still said "3.5 Pro coming soon" inside the event window.
+  // Thus a later, pre-close positive observation bounds the transition even if
+  // Google does not put datePublished metadata on the catalog itself.
+  if (
+    sameUrl(input.sourceUrl, GOOGLE_GEMINI_MODELS_URL) &&
+    input.sourceObservedAt >= GEMINI_MODELS_NEGATIVE_BASELINE_OBSERVED_AT &&
+    input.sourceObservedAt < closeAt
+  ) {
+    const text = decodedText(input.body);
+    const model = qualifyingGeminiModel(text);
+    if (model && !/\b3\.5 Pro coming soon\b/iu.test(text)) {
+      const assessment = resultAssessment({
+        ...input,
+        rationale: `Google's official Gemini catalog now identifies ${model.name} as released or actually available. The same page was frozen as "3.5 Pro coming soon" at ${new Date(GEMINI_MODELS_NEGATIVE_BASELINE_OBSERVED_AT).toISOString()}, so the positive transition is bounded to the qualifying pre-close window.`,
+      });
+      assessment?.sources.push({
+        url: GOOGLE_GEMINI_MODELS_URL,
+        kind: "authoritative",
+        observedAt: new Date(GEMINI_MODELS_NEGATIVE_BASELINE_OBSERVED_AT).toISOString(),
+        valueHash: GEMINI_MODELS_NEGATIVE_BASELINE_HASH,
+      });
+      return assessment;
+    }
+  }
+  return null;
+}
+
+function officialRecordArtifact(block: string, sourceUrl: string): string | null {
+  for (const match of block.matchAll(/(?:href|src)\s*=\s*(?:["']([^"']+)["']|([^\s"'<>`]+))/giu)) {
+    try {
+      const url = new URL(match[1] ?? match[2] ?? "", sourceUrl);
+      if (!isOfficialUapUrl(url.toString())) continue;
+      if (/\.(?:pdf|csv|json|xml|zip|mp4|mov|m4v|mp3|wav|jpe?g|png|tiff?)(?:$|[?#])/iu.test(url.toString())) {
+        return url.toString();
+      }
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+interface ValidatedArtifact {
+  url: string;
+  valueHash: string;
+}
+
+async function boundedResponseBytes(response: Response, maximumBytes = 4 * 1024 * 1024): Promise<Uint8Array | null> {
+  const declaredLength = Number(response.headers.get("content-length"));
+  if (response.status === 200 && Number.isFinite(declaredLength) && declaredLength > maximumBytes) return null;
+  const reader = response.body?.getReader();
+  if (!reader) return null;
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  try {
+    while (true) {
+      const item = await reader.read();
+      if (item.done) break;
+      if (!item.value || item.value.byteLength === 0) continue;
+      length += item.value.byteLength;
+      if (length > maximumBytes) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(item.value);
+    }
+  } catch {
+    return null;
+  }
+  if (length === 0) return null;
+  const body = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body;
+}
+
+function artifactSignatureIsValid(url: URL, contentType: string, body: Uint8Array): boolean {
+  const type = contentType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  const path = url.pathname.toLowerCase();
+  const textStart = new TextDecoder().decode(body.slice(0, Math.min(body.byteLength, 4_096))).trimStart();
+  if (path.endsWith(".pdf")) {
+    return (type === "application/pdf" || type === "application/octet-stream") && textStart.startsWith("%PDF-");
+  }
+  if (path.endsWith(".json")) {
+    if (!(type === "application/json" || type.endsWith("+json"))) return false;
+    try {
+      JSON.parse(new TextDecoder().decode(body));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  if (path.endsWith(".csv")) {
+    return ["text/csv", "text/plain", "application/octet-stream"].includes(type) && /[,\n]/u.test(textStart);
+  }
+  if (path.endsWith(".xml")) {
+    return ["application/xml", "text/xml", "application/octet-stream"].includes(type) && textStart.startsWith("<");
+  }
+  if (path.endsWith(".zip")) {
+    return ["application/zip", "application/x-zip-compressed", "application/octet-stream"].includes(type) &&
+      body[0] === 0x50 && body[1] === 0x4b;
+  }
+  if (/\.(?:mp4|mov|m4v)$/u.test(path)) {
+    return (type.startsWith("video/") || type === "application/octet-stream") &&
+      body.byteLength >= 12 && new TextDecoder().decode(body.slice(4, 8)) === "ftyp";
+  }
+  if (path.endsWith(".wav")) {
+    return (type.startsWith("audio/") || type === "application/octet-stream") &&
+      new TextDecoder().decode(body.slice(0, 4)) === "RIFF" && new TextDecoder().decode(body.slice(8, 12)) === "WAVE";
+  }
+  if (path.endsWith(".mp3")) {
+    return (type.startsWith("audio/") || type === "application/octet-stream") && (
+      new TextDecoder().decode(body.slice(0, 3)) === "ID3" || (body[0] === 0xff && (body[1] ?? 0) >= 0xe0)
+    );
+  }
+  if (path.endsWith(".png")) {
+    return (type === "image/png" || type === "application/octet-stream") &&
+      body[0] === 0x89 && new TextDecoder().decode(body.slice(1, 4)) === "PNG";
+  }
+  if (/\.jpe?g$/u.test(path)) {
+    return (type === "image/jpeg" || type === "application/octet-stream") && body[0] === 0xff && body[1] === 0xd8 && body[2] === 0xff;
+  }
+  if (/\.tiff?$/u.test(path)) {
+    const signature = new TextDecoder().decode(body.slice(0, 4));
+    return (type === "image/tiff" || type === "application/octet-stream") && (signature === "II*\u0000" || signature === "MM\u0000*");
+  }
+  return false;
+}
+
+async function validateOfficialArtifact(artifactUrl: string): Promise<ValidatedArtifact | null> {
+  const requested = parsedHttpsUrl(artifactUrl);
+  if (!requested || !isOfficialUapUrl(requested.toString())) return null;
+  try {
+    const response = await fetch(requested.toString(), {
+      headers: {
+        "user-agent": "Conviction-Delphi-Arena/1.0",
+        accept: "application/pdf,application/json,text/csv,application/xml,text/xml,application/zip,video/*,audio/*,image/*;q=0.9,application/octet-stream;q=0.8",
+        range: "bytes=0-1048575",
+      },
+      redirect: "follow",
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!response.ok || (response.status !== 200 && response.status !== 206)) return null;
+    const finalUrl = parsedHttpsUrl(response.url || requested.toString());
+    if (!finalUrl || finalUrl.origin !== requested.origin || !isOfficialUapUrl(finalUrl.toString())) return null;
+    const body = await boundedResponseBytes(response);
+    if (!body || !artifactSignatureIsValid(finalUrl, response.headers.get("content-type") ?? "", body)) return null;
+    return {
+      url: finalUrl.toString(),
+      valueHash: createHash("sha256").update(body).digest("hex"),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function qualifyingUapRecord(text: string, artifactUrl: string | null): boolean {
+  if (!artifactUrl) return false;
+  const statement = text.replace(/[’]/gu, "'")
+    .replace(/\bnot previously (?:made )?(?:public|released|available|disclosed)\b/giu, "previously unreleased")
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (
+    statement.includes("?") ||
+    /\b(?:no new|not|never|cannot|can't|won't|didn't|doesn't|hasn't|haven't|unable|fails?|failed|declines?|refuses?|den(?:y|ies|ied|ial)|disput(?:e|es|ed)|expect(?:s|ed|ing)?|slated|evaluat(?:e|es|ed|ing)|whether|candidate|reportedly|rumou?red|alleg(?:e|es|ed)|claims?|plans?|planned|scheduled|possible|possibly|potential|may|might|could|would|will|not yet|yet to|future|placeholder|draft|tomorrow|later|routine status|guidance|procedures?|polic(?:y|ies)|FAQ|index|summary|request\s+forms?|navigation|catalog|republication|republished|reposted|archived copy|unchanged|already public|previously released|withheld|unpublished|restricted|internal(?:ly)?|private(?:ly)?)\b/iu.test(statement)
+  ) return false;
+  const actor = String.raw`(?:AARO|ODNI|(?:the\s+)?All-domain\s+Anomaly\s+Resolution\s+Office|(?:the\s+)?Office\s+of\s+the\s+Director\s+of\s+National\s+Intelligence)`;
+  const novelty = String.raw`(?:new|additional|newly\s+(?:released|published|posted|available|declassified|unredacted|disclosed)|previously\s+unreleased)`;
+  const subject = String.raw`(?:UAP|UFO|unidentified\s+anomalous\s+phenomena)(?:\s+(?:case|mission|incident|case\s+resolution)){0,2}`;
+  const material = String.raw`(?:records?|documents?|reports?|files?|images?|videos?|audio(?:\s+files?)?|data(?:sets?)?)`;
+  const object = String.raw`(?:(?:${novelty})\s+)+(?:${subject})\s+(?:${material})`;
+  const completedAction = String.raw`(?:released|published|posted|made\s+(?:publicly\s+)?available|declassified|unredacted|disclosed)`;
+  const cleanEnd = String.raw`(?:\s+for\s+(?:public\s+)?(?:access|download))?(?=\s*(?:[.,;:!)]|$))`;
+  return [
+    new RegExp(`\\b${actor}\\s+(?:(?:has|have)\\s+)?(?:now\\s+)?${completedAction}\\s+(?:(?:one\\s+or\\s+more|an?|the|these)\\s+)*${object}\\b${cleanEnd}`, "iu"),
+    new RegExp(`\\b${object}\\s+(?:has|have|was|were)\\s+(?:now\\s+)?(?:been\\s+)?${completedAction}\\s+(?:by|through)\\s+${actor}\\b`, "iu"),
+    new RegExp(`\\b${object}\\s+(?:is|are|has\\s+been|have\\s+been)\\s+(?:now\\s+)?(?:publicly\\s+)?available\\s+(?:from|through|on)\\s+${actor}\\b`, "iu"),
+    new RegExp(`^New\\s+Content\\s+${object}\\b(?=\\s*(?:Government\\s+records\\b|[.,;:!)]|$))`, "iu"),
+  ].some((pattern) => pattern.test(statement));
+}
+
+export async function assessUapRecordsRelease(input: TimestampedOfficialPage & {
+  market: MarketView;
+  now: number;
+}): Promise<Assessment | null> {
+  const closeAt = openYesNoMarket(input.market, input.now);
+  if (
+    !UAP_RECORDS_RELEASE_PATTERN.test(input.market.question) ||
+    closeAt === null ||
+    !isNamedUapPage(input) ||
+    !isFreshPage(input)
+  ) return null;
+
+  const qualifyingCandidates: Array<{
+    artifactUrl: string;
+    publishedAt: number;
+  }> = [];
+  for (const candidate of evidenceCandidates(input.body)) {
+    if (
+      candidate.publishedAt < UAP_RECORDS_WINDOW_START ||
+      candidate.publishedAt >= closeAt ||
+      candidate.publishedAt > input.now ||
+      candidate.publishedAt > input.sourceObservedAt
+    ) continue;
+    const artifactUrl = officialRecordArtifact(candidate.body, input.sourceUrl);
+    if (!qualifyingUapRecord(decodedText(candidate.body), artifactUrl)) continue;
+    qualifyingCandidates.push({ artifactUrl: artifactUrl!, publishedAt: candidate.publishedAt });
+  }
+  const candidates = qualifyingCandidates.slice(0, 3);
+  const artifacts = await Promise.all(candidates.map((candidate) => validateOfficialArtifact(candidate.artifactUrl)));
+  for (const [index, artifact] of artifacts.entries()) {
+    if (!artifact) continue;
+    const candidate = candidates[index]!;
+    const assessment = resultAssessment({
+      ...input,
+      rationale: `An official AARO/ODNI entry timestamped ${new Date(candidate.publishedAt).toISOString()} releases a previously unavailable UAP record artifact on the same official service. This irreversibly satisfies YES within the Aug 10-21 window.`,
+    });
+    assessment?.sources.push({
+      url: artifact.url,
+      kind: "authoritative",
+      observedAt: new Date(input.now).toISOString(),
+      valueHash: artifact.valueHash,
+    });
+    return assessment;
   }
   return null;
 }
@@ -683,9 +1186,120 @@ export function assessCrs35Schedule(input: {
   };
 }
 
+async function fetchOfficialPages(input: {
+  seedUrls: string[];
+  now: number;
+  isAllowedUrl: (url: string) => boolean;
+  discoverLinks?: "gemini" | "uap";
+}): Promise<TimestampedOfficialPage[]> {
+  const fetchPage = async (
+    requestedUrl: string,
+    sourceRootUrl = requestedUrl,
+    sourceRootHash?: string,
+  ): Promise<TimestampedOfficialPage | null> => {
+    try {
+      const response = await fetch(requestedUrl, {
+        headers: { "user-agent": "Conviction-Delphi-Arena/1.0" },
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!response.ok) return null;
+      const sourceUrl = response.url || requestedUrl;
+      if (!input.isAllowedUrl(sourceUrl)) return null;
+      const body = await response.text();
+      const rootHash = sourceRootHash ?? (sameUrl(sourceRootUrl, requestedUrl)
+        ? createHash("sha256").update(body).digest("hex")
+        : undefined);
+      return {
+        body,
+        sourceUrl,
+        sourceObservedAt: input.now,
+        sourceRequestedUrl: requestedUrl,
+        sourceRootUrl,
+        ...(rootHash ? { sourceRootHash: rootHash } : {}),
+      };
+    } catch {
+      return null;
+    }
+  };
+
+  const seedPages = (await Promise.all(input.seedUrls.map((url) => fetchPage(url))))
+    .filter((page): page is TimestampedOfficialPage => page !== null);
+  if (!input.discoverLinks) return seedPages;
+  const seen = new Set(seedPages.map((page) => {
+    const url = new URL(page.sourceUrl);
+    url.hash = "";
+    return url.toString();
+  }));
+  const links: Array<{ url: string; rootUrl: string; rootHash: string; priority: number }> = [];
+  for (const page of seedPages) {
+    for (const match of page.body.matchAll(/href\s*=\s*(?:["']([^"']+)["']|([^\s"'<>`]+))/giu)) {
+      try {
+        const linked = new URL(match[1] ?? match[2] ?? "", page.sourceUrl);
+        linked.hash = "";
+        const linkedUrl = linked.toString();
+        if (seen.has(linkedUrl) || !input.isAllowedUrl(linkedUrl)) continue;
+        let priority: number;
+        if (input.discoverLinks === "gemini") {
+          if (!/gemini/iu.test(linked.pathname)) continue;
+          priority = /(?:gemini[-/.]3[-.]5|3[-.]5.*pro)/iu.test(linked.pathname) ? 0 : /(?:^|\/)pro(?:\/|$)/iu.test(linked.pathname) ? 1 : 2;
+        } else {
+          const root = parsedHttpsUrl(page.sourceRootUrl ?? "");
+          if (!root) continue;
+          const rootIsAaro = root.hostname === "aaro.mil" || root.hostname === "www.aaro.mil";
+          const linkedIsAaro = linked.hostname === "aaro.mil" || linked.hostname === "www.aaro.mil";
+          const rootIsOdni = ["dni.gov", "www.dni.gov", "odni.gov", "www.odni.gov"].includes(root.hostname);
+          const linkedIsOdni = ["dni.gov", "www.dni.gov", "odni.gov", "www.odni.gov"].includes(linked.hostname);
+          if (!(rootIsAaro && linkedIsAaro) && !(rootIsOdni && linkedIsOdni)) continue;
+          if (/\.(?:pdf|csv|json|xml|zip|mp4|mov|m4v|mp3|wav|jpe?g|png|tiff?)(?:$|[?#])/iu.test(linkedUrl)) continue;
+          const context = page.body.slice(Math.max(0, (match.index ?? 0) - 160), (match.index ?? 0) + match[0].length + 240);
+          if (!/(?:UAP|UFO|unidentified anomalous|reports-publications)/iu.test(`${linked.pathname} ${context}`)) continue;
+          priority = /(?:UAP|UFO|unidentified-anomalous)/iu.test(linked.pathname) ? 0 : 1;
+        }
+        seen.add(linkedUrl);
+        links.push({
+          url: linkedUrl,
+          rootUrl: page.sourceRootUrl ?? page.sourceRequestedUrl ?? page.sourceUrl,
+          rootHash: page.sourceRootHash ?? createHash("sha256").update(page.body).digest("hex"),
+          priority,
+        });
+      } catch {
+        continue;
+      }
+    }
+  }
+  const linkedPages = (await Promise.all(links
+    .sort((left, right) => left.priority - right.priority || left.url.localeCompare(right.url))
+    .slice(0, 8)
+    .map((link) => fetchPage(link.url, link.rootUrl, link.rootHash))))
+    .filter((page): page is TimestampedOfficialPage => page !== null);
+  return [...seedPages, ...linkedPages];
+}
+
 export async function generateOfficialAssessments(markets: MarketView[], now = Date.now()): Promise<Assessment[]> {
   const assessments: Assessment[] = [];
   for (const market of markets) {
+    if (GEMINI_PRO_RELEASE_PATTERN.test(market.question)) {
+      const pages = await fetchOfficialPages({
+        seedUrls: [GOOGLE_DEEPMIND_BLOG_URL, GOOGLE_GEMINI_MODELS_URL],
+        now,
+        isAllowedUrl: isOfficialGeminiUrl,
+        discoverLinks: "gemini",
+      });
+      const assessment = await firstSuccessfulAssessment(pages, async (page) => assessGeminiProRelease({ market, now, ...page }));
+      if (assessment) assessments.push(assessment);
+      continue;
+    }
+    if (UAP_RECORDS_RELEASE_PATTERN.test(market.question)) {
+      const pages = await fetchOfficialPages({
+        seedUrls: [AARO_CASES_REPORTS_URL, ODNI_REPORTS_URL],
+        now,
+        isAllowedUrl: isOfficialUapUrl,
+        discoverLinks: "uap",
+      });
+      const assessment = await firstSuccessfulAssessment(pages, async (page) => assessUapRecordsRelease({ market, now, ...page }));
+      if (assessment) assessments.push(assessment);
+      continue;
+    }
     if (MISSISSIPPI_DISCHARGE_PATTERN.test(market.question)) {
       try {
         if (now < MISSISSIPPI_FORECAST_START || now >= Date.parse(market.resolvesAt ?? "1970-01-01")) continue;
