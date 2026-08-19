@@ -1,12 +1,7 @@
 import "dotenv/config";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { assessmentsFileSchema, policySchema, type Assessment } from "./model.js";
-import {
-  allowedOpportunityAssessments,
-  loadOpportunities,
-  type OpportunityDefinition,
-} from "./opportunity-policy.js";
+import { assessmentsFileSchema, policySchema } from "./model.js";
 
 export const EXPECTED_WALLET = "0x86bE235Bb9Aa6D9E2Cf89b2f4E9c90e1ecb7C781";
 
@@ -19,33 +14,11 @@ export async function loadPolicy() {
   return policySchema.parse(JSON.parse(await readFile(path, "utf8")));
 }
 
-export async function loadOpportunityDefinitions(): Promise<OpportunityDefinition[]> {
+export async function loadAssessments() {
   const path = resolve(
-    process.env.DELPHI_OPPORTUNITIES_PATH?.trim() || "config/opportunities.json",
-  );
-  return loadOpportunities(path);
-}
-
-export async function loadAssessmentContext(): Promise<{
-  assessments: Assessment[];
-  opportunities: OpportunityDefinition[];
-}> {
-  const assessmentsPath = resolve(
     process.env.DELPHI_ASSESSMENTS_PATH?.trim() || "config/assessments.json",
   );
-  const [file, opportunities] = await Promise.all([
-    readFile(assessmentsPath, "utf8"),
-    loadOpportunityDefinitions(),
-  ]);
-  const assessments = assessmentsFileSchema.parse(JSON.parse(file)).assessments;
-  return {
-    assessments: allowedOpportunityAssessments(assessments, opportunities),
-    opportunities,
-  };
-}
-
-export async function loadAssessments() {
-  return (await loadAssessmentContext()).assessments;
+  return assessmentsFileSchema.parse(JSON.parse(await readFile(path, "utf8"))).assessments;
 }
 
 export function liveConfirmation(): string {

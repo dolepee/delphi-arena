@@ -1,16 +1,28 @@
+import { readFile } from "node:fs/promises";
 import type { DelphiClient } from "@gensyn-ai/gensyn-delphi-sdk";
+import { z } from "zod";
 import { findQuotedPlan } from "./quote-plan.js";
 import type { Assessment, Candidate, Policy } from "./model.js";
 import type { Book } from "./runtime.js";
-import type { OpportunityDefinition } from "./opportunity-policy.js";
-import { maximumAdditionalShares, orderBudget } from "./planner.js";
 
-export {
-  allowedOpportunityAssessments,
-  isAssessmentAllowedByOpportunity,
-  loadOpportunities,
-} from "./opportunity-policy.js";
-export type { OpportunityDefinition } from "./opportunity-policy.js";
+const opportunitySchema = z.object({
+  marketId: z.string().regex(/^0x[0-9a-fA-F]{40}$/u),
+  classification: z.enum(["result_capable", "partial_result", "forecast_only", "abstain"]),
+  resultCapableOutcomes: z.array(z.number().int().nonnegative()),
+  earliestDecisiveAt: z.string().datetime().nullable(),
+  rationale: z.string().min(20),
+});
+
+const opportunitiesSchema = z.object({
+  version: z.literal(1),
+  markets: z.array(opportunitySchema),
+});
+
+export type OpportunityDefinition = z.infer<typeof opportunitySchema>;
+
+export async function loadOpportunities(path: string): Promise<OpportunityDefinition[]> {
+  return opportunitiesSchema.parse(JSON.parse(await readFile(path, "utf8"))).markets;
+}
 
 function hypotheticalAssessment(
   marketId: `0x${string}`,
@@ -71,15 +83,16 @@ async function quoteCapacity(input: {
     existingPortfolioValue,
     existingPortfolioShares: input.positions.reduce((total, position) => total + position.shares, 0),
   };
-  const budgetTst = orderBudget({
-    policy: input.policy,
-    assessment,
-    totalEquityTst: input.book.totalEquityTst,
-    availableTst: input.availableTst,
-    deployedValueTst: existingPortfolioValue,
-    existingMarketValueTst: candidate.existingMarketValue,
-    mode: "full",
-  });
+  const marketRoom = input.book.totalEquityTst * input.policy.maximumPublishedResultMarketAllocationPct / 100 -
+    candidate.existingMarketValue;
+  const portfolioRoom = input.book.totalEquityTst * input.policy.maximumPublishedResultPortfolioAllocationPct / 100 -
+    existingPortfolioValue;
+  const budgetTst = Math.max(0, Math.min(
+    input.availableTst,
+    input.policy.maximumPublishedResultOrderTst,
+    marketRoom,
+    portfolioRoom,
+  ));
   const plan = await findQuotedPlan({
     client: input.client,
     candidate,
@@ -87,14 +100,6 @@ async function quoteCapacity(input: {
     budgetTst,
     mode: "full",
     totalEquityTst: input.book.totalEquityTst,
-    maximumShares: maximumAdditionalShares({
-      policy: input.policy,
-      assessment,
-      totalEquityTst: input.book.totalEquityTst,
-      positions: input.positions,
-      marketId: input.market.id,
-      mode: "full",
-    }),
     maximumAttempts: 10,
   });
   return { executable: plan !== null, reason: plan ? null : "edge, impact, allocation, or liquidity", plan };

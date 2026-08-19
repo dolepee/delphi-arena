@@ -14,7 +14,6 @@ export async function findQuotedPlan(input: {
   totalEquityTst: number;
   maximumShares?: number;
   maximumAttempts?: number;
-  now?: () => number;
 }): Promise<QuotedPlan | null> {
   if (input.budgetTst <= 0) return null;
   let low = 0;
@@ -33,11 +32,9 @@ export async function findQuotedPlan(input: {
       outcomeIdx: input.candidate.assessment.outcomeIndex,
       sharesOut: sharesToRaw(shares),
     });
-    const quotedAt = new Date((input.now ?? Date.now)()).toISOString();
     const plan = validateQuote({
       candidate: input.candidate,
       policy: input.policy,
-      quotedAt,
       shares,
       quotedCostTst: Number(tokensIn) / 1e6,
       budgetTst: input.budgetTst,

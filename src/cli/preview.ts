@@ -1,5 +1,5 @@
 import { client, assertSignerIdentity } from "../delphi.js";
-import { loadAssessmentContext, loadPolicy, stateDirectory } from "../config.js";
+import { loadAssessments, loadPolicy, stateDirectory } from "../config.js";
 import { maximumAdditionalShares, orderBudget, selectCandidates } from "../planner.js";
 import { findQuotedPlan } from "../quote-plan.js";
 import { readBook } from "../runtime.js";
@@ -8,23 +8,11 @@ import { ExitLedger } from "../exit-ledger.js";
 import { applyExitConstraints } from "../engine.js";
 
 await assertSignerIdentity();
-const [policy, assessmentContext, book] = await Promise.all([
-  loadPolicy(),
-  loadAssessmentContext(),
-  readBook(client),
-]);
-const { assessments, opportunities } = assessmentContext;
+const [policy, assessments, book] = await Promise.all([loadPolicy(), loadAssessments(), readBook(client)]);
 const previewNow = Date.now();
 const exits = await new ExitLedger(resolve(stateDirectory(), "exit-ledger.json")).records();
 const candidates = applyExitConstraints({
-  candidates: selectCandidates({
-    now: previewNow,
-    policy,
-    markets: book.markets,
-    positions: book.positions,
-    assessments,
-    opportunities,
-  }),
+  candidates: selectCandidates({ now: previewNow, policy, markets: book.markets, positions: book.positions, assessments }),
   exits,
   now: previewNow,
 });

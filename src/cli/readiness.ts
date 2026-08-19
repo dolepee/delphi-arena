@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { client, assertSignerIdentity } from "../delphi.js";
-import { loadAssessmentContext, loadPolicy, stateDirectory } from "../config.js";
+import { loadAssessments, loadPolicy, stateDirectory } from "../config.js";
 import { TradeLedger } from "../ledger.js";
 import { ExitLedger } from "../exit-ledger.js";
 import { applyExitConstraints } from "../engine.js";
@@ -14,12 +14,7 @@ try {
 } catch (error) {
   checks.push({ name: "signer", ok: false, detail: String(error) });
 }
-const [policy, assessmentContext, book] = await Promise.all([
-  loadPolicy(),
-  loadAssessmentContext(),
-  readBook(client),
-]);
-const { assessments, opportunities } = assessmentContext;
+const [policy, assessments, book] = await Promise.all([loadPolicy(), loadAssessments(), readBook(client)]);
 checks.push({ name: "api", ok: book.markets.length > 0, detail: `${book.markets.length} open markets` });
 checks.push({ name: "gas", ok: book.gasEth >= policy.minimumGasEth, detail: `${book.gasEth} ETH` });
 checks.push({ name: "funding", ok: book.totalEquityTst >= policy.minimumStartingTst, detail: `${book.totalEquityTst} TST` });
@@ -30,14 +25,7 @@ const [exitRecords, pendingTrade, pendingExit] = await Promise.all([
   exitLedger.records(), tradeLedger.pending(), exitLedger.pending(),
 ]);
 const candidates = applyExitConstraints({
-  candidates: selectCandidates({
-    now: readinessNow,
-    policy,
-    markets: book.markets,
-    positions: book.positions,
-    assessments,
-    opportunities,
-  }),
+  candidates: selectCandidates({ now: readinessNow, policy, markets: book.markets, positions: book.positions, assessments }),
   exits: exitRecords,
   now: readinessNow,
 });

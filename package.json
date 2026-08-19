@@ -16,8 +16,6 @@
     "opportunity-audit": "tsx src/cli/opportunity-audit.ts",
     "opportunity-monitor": "tsx src/cli/opportunity-monitor.ts",
     "leaderboard-monitor": "tsx src/cli/leaderboard-monitor.ts",
-    "podium-monitor": "tsx src/cli/podium-monitor.ts",
-    "preapprove-exact": "tsx src/cli/preapprove-exact.ts",
     "monitor": "tsx src/cli/monitor.ts",
     "cycle": "tsx src/cli/run-cycle.ts",
     "manage-positions": "tsx src/cli/manage-positions.ts",

@@ -73,8 +73,6 @@ async function main(): Promise<void> {
     "show",
     "delphi-event.service",
     "delphi-event.timer",
-    "delphi-podium.service",
-    "delphi-podium.timer",
     "delphi-opportunities.service",
     "delphi-opportunities.timer",
     "delphi-settle.service",
