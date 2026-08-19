@@ -1,7 +1,7 @@
 import { saveAssessments, selectEventAssessments } from "../assessments.js";
-import { eventExecutionEnabled, loadOpportunityDefinitions, loadPolicy } from "../config.js";
+import { eventExecutionEnabled, loadPolicy } from "../config.js";
 import { client, assertSignerIdentity } from "../delphi.js";
-import { preflightTournamentPlans, quoteCandidates, runTradingCycle } from "../engine.js";
+import { quoteCandidates, runTradingCycle } from "../engine.js";
 import { generateOfficialAssessments } from "../official-assessors.js";
 import { selectCandidates } from "../planner.js";
 import { runPositionManagementCycle } from "../position-manager.js";
@@ -15,17 +15,11 @@ const result = await runEventCycle({
   readBook,
   generateOfficialAssessments,
   selectEventAssessments,
-  loadOpportunityDefinitions,
   executionEnabled: eventExecutionEnabled,
   assertNoPendingIntents: assertNoPendingEventIntents,
   loadPolicy,
   selectCandidates,
   quoteCandidates,
-  preflightTournamentPlans: ({ plans, policy }) => preflightTournamentPlans({
-    client,
-    plans,
-    policy,
-  }),
   saveAssessments,
   managePositions: runPositionManagementCycle,
   trade: runTradingCycle,

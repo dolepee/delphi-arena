@@ -5,10 +5,6 @@ import { TradeLedger } from "./ledger.js";
 import { ExitLedger } from "./exit-ledger.js";
 import { resolve } from "node:path";
 import { stateDirectory } from "./config.js";
-import {
-  isAssessmentAllowedByOpportunity,
-  type OpportunityDefinition,
-} from "./opportunity-policy.js";
 
 export interface EventCycleDependencies {
   client: DelphiClient;
@@ -16,7 +12,6 @@ export interface EventCycleDependencies {
   readBook: (client: DelphiClient) => Promise<Book>;
   generateOfficialAssessments: (markets: Book["markets"], now: number) => Promise<Assessment[]>;
   selectEventAssessments: (assessments: Assessment[]) => Assessment[];
-  loadOpportunityDefinitions: () => Promise<OpportunityDefinition[]>;
   executionEnabled: () => boolean;
   assertNoPendingIntents: () => Promise<void>;
   loadPolicy: () => Promise<Policy>;
@@ -26,7 +21,6 @@ export interface EventCycleDependencies {
     markets: Book["markets"];
     positions: Book["positions"];
     assessments: Assessment[];
-    opportunities: OpportunityDefinition[];
   }) => Candidate[];
   quoteCandidates: (input: {
     client: DelphiClient;
@@ -35,10 +29,6 @@ export interface EventCycleDependencies {
     book: Book;
     mode: "full";
   }) => Promise<{ plans: QuotedPlan[]; quoteFailures: string[] }>;
-  preflightTournamentPlans: (input: {
-    plans: QuotedPlan[];
-    policy: Policy;
-  }) => Promise<{ plans: QuotedPlan[]; failures: string[] }>;
   saveAssessments: (assessments: Assessment[]) => Promise<void>;
   managePositions: (client: DelphiClient, now: number, options?: { allowStaleProfitTake?: boolean }) => Promise<unknown>;
   trade: (client: DelphiClient, now: number) => Promise<unknown>;
@@ -65,14 +55,9 @@ function timestamp(value: number): string {
 
 export async function runEventCycle(dependencies: EventCycleDependencies): Promise<Record<string, unknown>> {
   const startedAt = dependencies.now();
-  const [sourceBook, opportunities] = await Promise.all([
-    dependencies.readBook(dependencies.client),
-    dependencies.loadOpportunityDefinitions(),
-  ]);
+  const sourceBook = await dependencies.readBook(dependencies.client);
   const assessments = dependencies.selectEventAssessments(
     await dependencies.generateOfficialAssessments(sourceBook.markets, startedAt),
-  ).filter((assessment) =>
-    isAssessmentAllowedByOpportunity(assessment, opportunities)
   );
   if (assessments.length === 0) {
     const completedAt = dependencies.now();
@@ -111,8 +96,6 @@ export async function runEventCycle(dependencies: EventCycleDependencies): Promi
       candidate.id.toLowerCase() === assessment.marketId.toLowerCase()
     );
     return market?.status === "open" &&
-      market.outcomes[assessment.outcomeIndex] !== undefined &&
-      market.prices[assessment.outcomeIndex] !== undefined &&
       (!market.resolvesAt || quoteNow < Date.parse(market.resolvesAt));
   });
   if (activeAssessments.length === 0) {
@@ -166,7 +149,6 @@ export async function runEventCycle(dependencies: EventCycleDependencies): Promi
     markets: book.markets,
     positions: projectedBook.positions,
     assessments: activeAssessments,
-    opportunities,
   });
   const capacity = await dependencies.quoteCandidates({
     client: dependencies.client,
@@ -175,27 +157,11 @@ export async function runEventCycle(dependencies: EventCycleDependencies): Promi
     book: projectedBook,
     mode: "full",
   });
-  if (opposingPositions.length > 0) {
-    // Exact contrary evidence justifies closing the losing side, but the
-    // tournament entry waits for the next cycle so its book and official PnL
-    // can reconcile flat before sizing.
-    await dependencies.saveAssessments(activeAssessments);
-    const management = await dependencies.managePositions(
-      dependencies.client,
-      dependencies.now(),
-      { allowStaleProfitTake: true },
-    );
-    const completedAt = dependencies.now();
-    return {
-      status: "EVENT_POSITION_EXIT_ONLY",
-      startedAt: timestamp(startedAt),
-      completedAt: timestamp(completedAt),
-      latencyMs: { total: completedAt - startedAt },
-      quoteFailures: capacity.quoteFailures,
-      management,
-    };
-  }
   if (capacity.plans.length === 0) {
+    await dependencies.saveAssessments(activeAssessments);
+    const management = opposingPositions.length > 0
+      ? await dependencies.managePositions(dependencies.client, dependencies.now())
+      : { status: "NO_EXIT" as const, reason: "no opposing exact-result position" };
     const completedAt = dependencies.now();
     return {
       status: "EVENT_WITHOUT_EXECUTABLE_EDGE",
@@ -203,33 +169,17 @@ export async function runEventCycle(dependencies: EventCycleDependencies): Promi
       completedAt: timestamp(completedAt),
       latencyMs: { total: completedAt - startedAt },
       quoteFailures: capacity.quoteFailures,
+      management,
     };
   }
 
-  const guarded = await dependencies.preflightTournamentPlans({
-    plans: capacity.plans,
-    policy,
-  });
-  if (guarded.plans.length === 0) {
-    const completedAt = dependencies.now();
-    return {
-      status: "EVENT_BLOCKED_BY_TOURNAMENT_GUARD",
-      startedAt: timestamp(startedAt),
-      completedAt: timestamp(completedAt),
-      latencyMs: { total: completedAt - startedAt },
-      quoteFailures: [...capacity.quoteFailures, ...guarded.failures],
-    };
-  }
-
-  const allowedOutcomes = new Set(guarded.plans.map((plan) =>
-    `${plan.market.id.toLowerCase()}:${plan.assessment.outcomeIndex}`
-  ));
-  const guardedAssessments = activeAssessments.filter((assessment) =>
-    allowedOutcomes.has(`${assessment.marketId.toLowerCase()}:${assessment.outcomeIndex}`)
-  );
-  await dependencies.saveAssessments(guardedAssessments);
+  await dependencies.saveAssessments(activeAssessments);
   const assessedAt = dependencies.now();
-  const management = { status: "NO_EXIT" as const, reason: "flat tournament book" };
+  const management = await dependencies.managePositions(
+    dependencies.client,
+    assessedAt,
+    { allowStaleProfitTake: true },
+  );
   const managedAt = dependencies.now();
   const trading = await dependencies.trade(dependencies.client, managedAt);
   const completedAt = dependencies.now();

@@ -49,62 +49,6 @@
       "resultCapableOutcomes": [],
       "earliestDecisiveAt": "2026-08-18T18:00:00.000Z",
       "rationale": "The NOAA observation window begins one hour after the Delphi market closes."
-    },
-    {
-      "marketId": "0xbf1ce7c9d751b92bfac4acefe0e87d82b1d30163",
-      "classification": "forecast_only",
-      "resultCapableOutcomes": [],
-      "earliestDecisiveAt": "2026-08-20T00:00:00.000Z",
-      "rationale": "Sporting KC-St. Louis kicks off exactly when trading closes, so no final-result outcome can be known while the market is open."
-    },
-    {
-      "marketId": "0xc598c6fac139b5b76a88ac08bf3e4663f1336acc",
-      "classification": "forecast_only",
-      "resultCapableOutcomes": [],
-      "earliestDecisiveAt": "2026-08-20T19:30:00.000Z",
-      "rationale": "The Treasury's governing 10-year input quotation is observed around 15:30 ET, six and a half hours after Delphi trading closes."
-    },
-    {
-      "marketId": "0x360274d153c58566943cb21088dd95e45638bda3",
-      "classification": "forecast_only",
-      "resultCapableOutcomes": [],
-      "earliestDecisiveAt": "2026-08-20T18:00:00.000Z",
-      "rationale": "The governing NOAA Battery water-level observation window begins one hour after Delphi trading closes."
-    },
-    {
-      "marketId": "0x26c97689a636c28040e979f1d242fd996730a8bc",
-      "classification": "forecast_only",
-      "resultCapableOutcomes": [],
-      "earliestDecisiveAt": "2026-08-20T19:00:00.000Z",
-      "rationale": "Rayo Vallecano-Alavés kicks off exactly when trading closes, so the draw result cannot be known while the market is open."
-    },
-    {
-      "marketId": "0x701f91b48fdf8eaac09de1317f34d3d901b74216",
-      "classification": "forecast_only",
-      "resultCapableOutcomes": [],
-      "earliestDecisiveAt": "2026-08-21T00:30:00.000Z",
-      "rationale": "Botafogo-Cienciano kicks off exactly when trading closes, so the four-or-more-goals result cannot be known while the market is open."
-    },
-    {
-      "marketId": "0x2e0d3ee960783033bb70e5b5577a04a1d19f7dcf",
-      "classification": "partial_result",
-      "resultCapableOutcomes": [0],
-      "earliestDecisiveAt": "2026-08-10T00:00:00.000Z",
-      "rationale": "YES becomes irreversible if Google publicly releases or makes available a numerically versioned Gemini 3.5-or-later Pro model before close; NO is exact only after the deadline."
-    },
-    {
-      "marketId": "0x2258cfca1af0eac76dcc6d0b1a134f274bdf2d3e",
-      "classification": "partial_result",
-      "resultCapableOutcomes": [0],
-      "earliestDecisiveAt": "2026-08-10T00:00:00.000Z",
-      "rationale": "YES becomes irreversible upon a qualifying new official AARO or ODNI UAP-record release in the stated window; NO is exact only after the window closes."
-    },
-    {
-      "marketId": "0x77985bbb52a7744a8eeab5a82d02c8c079fa7a55",
-      "classification": "forecast_only",
-      "resultCapableOutcomes": [],
-      "earliestDecisiveAt": "2026-08-21T18:30:00.000Z",
-      "rationale": "The governing WTI settlement window runs through Delphi's 18:30 UTC close and the official settlement is published afterward, so neither result is exact while trading is open."
     }
   ]
 }
