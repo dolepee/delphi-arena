@@ -1,5 +1,10 @@
 import { createHash } from "node:crypto";
 import type { Assessment, Candidate, MarketView, Policy, PositionView, QuotedPlan } from "./model.js";
+import {
+  isAssessmentAllowedByOpportunity,
+  type OpportunityDefinition,
+} from "./opportunity-policy.js";
+import { tournamentSettings } from "./tournament-guard.js";
 
 const confidenceWeight = { high: 1, medium: 0.7, low: 0.35 } as const;
 
@@ -44,6 +49,7 @@ export function selectCandidates(input: {
   markets: MarketView[];
   positions: PositionView[];
   assessments: Assessment[];
+  opportunities: OpportunityDefinition[];
 }): Candidate[] {
   const existingPortfolioShares = input.positions.reduce(
     (total, position) => total + position.shares,
@@ -61,6 +67,7 @@ export function selectCandidates(input: {
   }
 
   return input.assessments.flatMap((assessment) => {
+    if (!isAssessmentAllowedByOpportunity(assessment, input.opportunities)) return [];
     if (!isAssessmentEvidenceValid({ assessment, policy: input.policy, now: input.now })) return [];
 
     const market = markets.get(assessment.marketId.toLowerCase());
@@ -112,6 +119,7 @@ export function planDigest(candidate: Candidate, shares: number, quotedCostTst: 
 export function validateQuote(input: {
   candidate: Candidate;
   policy: Policy;
+  quotedAt?: string;
   shares: number;
   quotedCostTst: number;
   budgetTst: number;
@@ -140,12 +148,13 @@ export function validateQuote(input: {
   const worstCaseExpectedProfitTst =
     input.shares * input.candidate.assessment.probability - maximumCostTst;
   const resultLane = input.mode === "full" && isDeterministicPublishedResult(input.candidate.assessment);
-  const marketAllocationPct = resultLane
+  const tournament = resultLane ? tournamentSettings(input.policy) : null;
+  const marketAllocationPct = tournament?.allocationPct ?? (resultLane
     ? input.policy.maximumPublishedResultMarketAllocationPct
-    : input.policy.maximumMarketAllocationPct;
-  const portfolioAllocationPct = resultLane
+    : input.policy.maximumMarketAllocationPct);
+  const portfolioAllocationPct = tournament?.allocationPct ?? (resultLane
     ? input.policy.maximumPublishedResultPortfolioAllocationPct
-    : input.policy.maximumPortfolioAllocationPct;
+    : input.policy.maximumPortfolioAllocationPct);
   // Forecasts retain conservative face-value concentration limits. A
   // deterministic published result instead uses cash at risk: its 1 TST face
   // value is the expected payout, not the amount that can be lost. The quote
@@ -165,6 +174,10 @@ export function validateQuote(input: {
   ) return null;
   return {
     ...input.candidate,
+    // Direct validation callers that do not originate from a live SDK quote
+    // receive an intentionally stale timestamp. Production quote discovery
+    // always supplies the actual post-response observation time.
+    quotedAt: input.quotedAt ?? new Date(0).toISOString(),
     shares: input.shares,
     quotedCostTst: input.quotedCostTst,
     maximumCostTst,
@@ -189,20 +202,24 @@ export function orderBudget(input: {
   mode: "canary" | "full";
 }): number {
   const resultLane = input.mode === "full" && isDeterministicPublishedResult(input.assessment);
-  const marketAllocationPct = resultLane
+  const tournament = resultLane ? tournamentSettings(input.policy) : null;
+  const marketAllocationPct = tournament?.allocationPct ?? (resultLane
     ? input.policy.maximumPublishedResultMarketAllocationPct
-    : input.policy.maximumMarketAllocationPct;
-  const portfolioAllocationPct = resultLane
+    : input.policy.maximumMarketAllocationPct);
+  const portfolioAllocationPct = tournament?.allocationPct ?? (resultLane
     ? input.policy.maximumPublishedResultPortfolioAllocationPct
-    : input.policy.maximumPortfolioAllocationPct;
+    : input.policy.maximumPortfolioAllocationPct);
   const marketRoom = input.totalEquityTst * marketAllocationPct / 100 - input.existingMarketValueTst;
   const portfolioRoom = input.totalEquityTst * portfolioAllocationPct / 100 - input.deployedValueTst;
   const modeCap = input.mode === "canary"
     ? input.policy.canaryMaximumTst
     : resultLane
-      ? input.policy.maximumPublishedResultOrderTst
+      ? tournament?.orderCapTst ?? input.policy.maximumPublishedResultOrderTst
       : input.policy.maximumOrderTst;
-  const budget = Math.max(0, Math.min(input.availableTst, marketRoom, portfolioRoom, modeCap));
+  const availableRoom = tournament
+    ? input.availableTst * tournament.allocationPct / 100
+    : input.availableTst;
+  const budget = Math.max(0, Math.min(availableRoom, marketRoom, portfolioRoom, modeCap));
   if (input.mode === "full" && budget < input.policy.minimumFullOrderTst) return 0;
   return budget;
 }

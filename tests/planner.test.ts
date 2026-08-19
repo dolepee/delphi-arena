@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Assessment, MarketView, Policy, PositionView } from "../src/model.js";
+import type { OpportunityDefinition } from "../src/opportunity-policy.js";
 import { isAssessmentEvidenceValid, maximumAdditionalShares, orderBudget, rankQuotedPlans, selectCandidates, validateQuote } from "../src/planner.js";
 
 const NOW = Date.parse("2026-08-12T12:00:00.000Z");
@@ -53,10 +54,17 @@ const ASSESSMENT: Assessment = {
     valueHash: "a".repeat(64),
   }],
 };
+const OPPORTUNITIES: OpportunityDefinition[] = [{
+  marketId: MARKET.id,
+  classification: "result_capable",
+  resultCapableOutcomes: [0],
+  earliestDecisiveAt: "2026-08-12T11:00:00.000Z",
+  rationale: "The official source can publish a decisive value before trading closes.",
+}];
 
 describe("source-first candidate selection", () => {
   it("selects a fresh authoritative edge", () => {
-    const candidates = selectCandidates({ now: NOW, policy: POLICY, markets: [MARKET], positions: [], assessments: [ASSESSMENT] });
+    const candidates = selectCandidates({ now: NOW, policy: POLICY, markets: [MARKET], positions: [], assessments: [ASSESSMENT], opportunities: OPPORTUNITIES });
     expect(candidates).toHaveLength(1);
     expect(candidates[0]?.rawEdge).toBeCloseTo(0.25);
   });
@@ -68,17 +76,36 @@ describe("source-first candidate selection", () => {
     [{ ...ASSESSMENT, observedAt: "2026-08-12T10:00:00.000Z" }],
     [{ ...ASSESSMENT, sources: [{ ...ASSESSMENT.sources[0]!, kind: "secondary" as const }] }],
   ])("refuses non-actionable, weak, stale, expired, or non-authoritative evidence", (assessment) => {
-    expect(selectCandidates({ now: NOW, policy: POLICY, markets: [MARKET], positions: [], assessments: [assessment] })).toHaveLength(0);
+    expect(selectCandidates({ now: NOW, policy: POLICY, markets: [MARKET], positions: [], assessments: [assessment], opportunities: OPPORTUNITIES })).toHaveLength(0);
   });
 
   it("refuses an opposing position in the same market", () => {
     const positions: PositionView[] = [{ marketId: MARKET.id, outcomeIndex: 1, shares: 10, markPrice: 0.4 }];
-    expect(selectCandidates({ now: NOW, policy: POLICY, markets: [MARKET], positions, assessments: [ASSESSMENT] })).toHaveLength(0);
+    expect(selectCandidates({ now: NOW, policy: POLICY, markets: [MARKET], positions, assessments: [ASSESSMENT], opportunities: OPPORTUNITIES })).toHaveLength(0);
+  });
+
+  it("fails closed for an unclassified or abstained market", () => {
+    expect(selectCandidates({
+      now: NOW,
+      policy: POLICY,
+      markets: [MARKET],
+      positions: [],
+      assessments: [ASSESSMENT],
+      opportunities: [],
+    })).toHaveLength(0);
+    expect(selectCandidates({
+      now: NOW,
+      policy: POLICY,
+      markets: [MARKET],
+      positions: [],
+      assessments: [ASSESSMENT],
+      opportunities: [{ ...OPPORTUNITIES[0]!, classification: "abstain", resultCapableOutcomes: [] }],
+    })).toHaveLength(0);
   });
 });
 
 describe("LMSR quote and allocation controls", () => {
-  const candidate = selectCandidates({ now: NOW, policy: POLICY, markets: [MARKET], positions: [], assessments: [ASSESSMENT] })[0]!;
+  const candidate = selectCandidates({ now: NOW, policy: POLICY, markets: [MARKET], positions: [], assessments: [ASSESSMENT], opportunities: OPPORTUNITIES })[0]!;
 
   it("accepts a quote only when net edge, impact, slippage, and budget survive", () => {
     const plan = validateQuote({ candidate, policy: POLICY, shares: 10, quotedCostTst: 6.2, budgetTst: 7, mode: "canary", totalEquityTst: 1000 });
@@ -98,6 +125,7 @@ describe("LMSR quote and allocation controls", () => {
       markets: [{ ...MARKET, prices: [0.95, 0.05] }],
       positions: [],
       assessments: [released],
+      opportunities: OPPORTUNITIES,
     });
     expect(releasedCandidate).toBeDefined();
     expect(validateQuote({
@@ -124,6 +152,7 @@ describe("LMSR quote and allocation controls", () => {
       markets: [{ ...MARKET, prices: [0.95, 0.05] }],
       positions: [],
       assessments: [{ ...released, evidenceClass: "forecast" }],
+      opportunities: OPPORTUNITIES,
     })).toHaveLength(0);
   });
 
@@ -137,6 +166,7 @@ describe("LMSR quote and allocation controls", () => {
       markets: [MARKET],
       positions: [],
       assessments: [assessment],
+      opportunities: OPPORTUNITIES,
     })).toHaveLength(0);
   });
 
@@ -205,6 +235,7 @@ describe("LMSR quote and allocation controls", () => {
       markets: [{ ...MARKET, prices: [0.94, 0.06] }],
       positions: [],
       assessments: [scheduled],
+      opportunities: OPPORTUNITIES,
     });
     expect(candidate).toBeDefined();
     expect(validateQuote({
@@ -232,6 +263,75 @@ describe("LMSR quote and allocation controls", () => {
     expect(orderBudget({ policy: POLICY, assessment: scheduled, totalEquityTst: 1000, availableTst: 1000, deployedValueTst: 0, existingMarketValueTst: 0, mode: "full" })).toBe(250);
   });
 
+  it("uses the isolated 1350/95% tournament profile only for a deterministic full result", () => {
+    const tournamentPolicy: Policy = {
+      ...POLICY,
+      maximumTournamentExactResultOrderTst: 1350,
+      maximumTournamentEquityAllocationPct: 95,
+      minimumTournamentPodiumBufferTst: 300,
+      maximumTournamentLeaderboardAgeSeconds: 45,
+      maximumTournamentQuoteAgeSeconds: 15,
+    };
+    const published = {
+      ...ASSESSMENT,
+      evidenceClass: "published_result" as const,
+      confidence: "high" as const,
+      probability: 0.99,
+    };
+    const scheduled = {
+      ...ASSESSMENT,
+      evidenceClass: "official_schedule" as const,
+      confidence: "high" as const,
+      probability: 0.99,
+    };
+    expect(orderBudget({
+      policy: tournamentPolicy,
+      assessment: published,
+      totalEquityTst: 1422.528949,
+      availableTst: 1422.528949,
+      deployedValueTst: 0,
+      existingMarketValueTst: 0,
+      mode: "full",
+    })).toBe(1350);
+    expect(orderBudget({
+      policy: tournamentPolicy,
+      assessment: published,
+      totalEquityTst: 1422.528949,
+      availableTst: 1422.528949,
+      deployedValueTst: 0,
+      existingMarketValueTst: 0,
+      mode: "canary",
+    })).toBe(1);
+    expect(orderBudget({
+      policy: tournamentPolicy,
+      assessment: scheduled,
+      totalEquityTst: 1422.528949,
+      availableTst: 1422.528949,
+      deployedValueTst: 0,
+      existingMarketValueTst: 0,
+      mode: "full",
+    })).toBe(250);
+
+    const exactCandidate = {
+      ...candidate,
+      spotPrice: 0.13,
+      market: { ...candidate.market, prices: [0.13, 0.87] },
+      assessment: published,
+      rawEdge: 0.86,
+    };
+    const accepted = validateQuote({
+      candidate: exactCandidate,
+      policy: tournamentPolicy,
+      shares: 5_000,
+      quotedCostTst: 1_323,
+      budgetTst: 1_350,
+      mode: "full",
+      totalEquityTst: 1422.528949,
+    });
+    expect(accepted?.maximumCostTst).toBe(1349.46);
+    expect(accepted).not.toBeNull();
+  });
+
   it("caps deterministic result orders by worst-case cash exposure", () => {
     const published = { ...ASSESSMENT, evidenceClass: "published_result" as const, probability: 0.99 };
     const positions: PositionView[] = [{
@@ -246,6 +346,7 @@ describe("LMSR quote and allocation controls", () => {
       markets: [MARKET],
       positions,
       assessments: [published],
+      opportunities: OPPORTUNITIES,
     });
     expect(positioned?.existingMarketShares).toBe(800);
     expect(positioned?.existingPortfolioShares).toBe(800);

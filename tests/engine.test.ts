@@ -1,6 +1,15 @@
-import { describe, expect, it } from "vitest";
-import type { Candidate, Policy } from "../src/model.js";
-import { isPlanExecutableAt, isPlanWithinBookLimits, quoteCandidates } from "../src/engine.js";
+import { describe, expect, it, vi } from "vitest";
+import type { Candidate, Policy, QuotedPlan } from "../src/model.js";
+import {
+  executeQuotedPlan,
+  hasConfirmedExactResultExecution,
+  isPlanExecutableAt,
+  isPlanWithinBookLimits,
+  preflightTournamentExactPlan,
+  quoteCandidates,
+  type TournamentPreflightResult,
+} from "../src/engine.js";
+import type { PodiumSnapshot } from "../src/podium-monitor.js";
 
 const policy: Policy = {
   competitionEndsAt: "2026-08-23T23:59:00.000Z", minimumStartingTst: 1000, minimumGasEth: 0.001,
@@ -10,6 +19,15 @@ const policy: Policy = {
   maximumPublishedResultOrderTst: 850, minimumFullOrderTst: 5, maximumPriceImpact: 0.04,
   maximumPublishedResultPriceImpact: 0.2, slippagePct: 2, maximumNewTradesPerCycle: 1,
   minimumEvidenceSources: 1, maximumAssessmentAgeMinutes: 30, canaryMaximumTst: 1, qualificationFallback: "none",
+};
+
+const tournamentPolicy: Policy = {
+  ...policy,
+  maximumTournamentExactResultOrderTst: 1350,
+  maximumTournamentEquityAllocationPct: 95,
+  minimumTournamentPodiumBufferTst: 300,
+  maximumTournamentLeaderboardAgeSeconds: 45,
+  maximumTournamentQuoteAgeSeconds: 15,
 };
 
 function candidate(id: string, probability: number, spotPrice: number): Candidate {
@@ -101,6 +119,7 @@ describe("fresh-book allocation", () => {
   };
   const plan = {
     ...published,
+    quotedAt: "2026-08-13T11:59:55.000Z",
     shares: 50,
     quotedCostTst: 35,
     maximumCostTst: 35.7,
@@ -138,5 +157,195 @@ describe("fresh-book allocation", () => {
       policy,
       book: { ...book, markets: [{ ...published.market, status: "closed" }] },
     })).toBe(false);
+  });
+});
+
+describe("guarded tournament execution", () => {
+  const published = {
+    ...candidate("f", 0.99, 0.4),
+    assessment: {
+      ...candidate("f", 0.99, 0.4).assessment,
+      evidenceClass: "published_result" as const,
+      probability: 0.99,
+      observedAt: "2026-08-13T11:59:00.000Z",
+      expiresAt: "2026-08-13T12:10:00.000Z",
+    },
+  };
+  const plan: QuotedPlan = {
+    ...published,
+    quotedAt: "2026-08-13T11:59:55.000Z",
+    shares: 100,
+    quotedCostTst: 40,
+    maximumCostTst: 40.8,
+    maximumCostAtomic: 40_800_000n,
+    averagePrice: 0.4,
+    maximumAveragePrice: 0.408,
+    netEdge: 0.582,
+    priceImpact: 0.008,
+    worstCaseExpectedProfitTst: 58.2,
+    mode: "full",
+    decisionId: "f".repeat(64),
+  };
+  const flatBook = {
+    rawMarkets: [],
+    rawPositions: [],
+    markets: [published.market],
+    positions: [],
+    availableTst: 1000,
+    gasEth: 1,
+    deployedValueTst: 0,
+    totalEquityTst: 1000,
+  };
+
+  function executionFixture() {
+    const ledger = {
+      get: vi.fn(async () => null),
+      prepare: vi.fn(async () => undefined),
+      discardPrepared: vi.fn(async () => undefined),
+      confirm: vi.fn(async () => undefined),
+    };
+    const client = {
+      ensureTokenApproval: vi.fn(async () => ({ approvalNeeded: false, allowance: 100_000_000n })),
+      buyShares: vi.fn(async () => ({ transactionHash: `0x${"a".repeat(64)}` })),
+    };
+    return { ledger, client };
+  }
+
+  it("discards PREPARED and never buys when the second podium guard rejects", async () => {
+    const fixture = executionFixture();
+    const preflight = vi.fn()
+      .mockResolvedValueOnce({ allowed: true } as TournamentPreflightResult)
+      .mockResolvedValueOnce({
+        allowed: false,
+        reason: "podium_target_not_cleared",
+      } as TournamentPreflightResult);
+    await expect(executeQuotedPlan({
+      client: fixture.client as never,
+      plan,
+      policy: tournamentPolicy,
+      ledger: fixture.ledger,
+      now: () => Date.parse("2026-08-13T12:00:00.000Z"),
+      readBook: vi.fn(async () => flatBook),
+      preflightTournament: preflight,
+    })).resolves.toEqual({
+      status: "SKIPPED",
+      reason: "post_approval_tournament_preflight:podium_target_not_cleared",
+    });
+    expect(preflight).toHaveBeenCalledTimes(2);
+    expect(fixture.ledger.prepare).toHaveBeenCalledOnce();
+    expect(fixture.ledger.discardPrepared).toHaveBeenCalledWith(plan.decisionId);
+    expect(fixture.client.buyShares).not.toHaveBeenCalled();
+    expect(fixture.ledger.confirm).not.toHaveBeenCalled();
+  });
+
+  it("buys exactly once with the original atomic ceiling after two fresh guards pass", async () => {
+    const fixture = executionFixture();
+    const preflight = vi.fn(async () => ({ allowed: true } as TournamentPreflightResult));
+    await expect(executeQuotedPlan({
+      client: fixture.client as never,
+      plan,
+      policy: tournamentPolicy,
+      ledger: fixture.ledger,
+      now: () => Date.parse("2026-08-13T12:00:00.000Z"),
+      readBook: vi.fn(async () => flatBook),
+      preflightTournament: preflight,
+    })).resolves.toEqual({
+      status: "TRADED",
+      transactionHash: `0x${"a".repeat(64)}`,
+    });
+    expect(preflight).toHaveBeenCalledTimes(2);
+    expect(fixture.client.buyShares).toHaveBeenCalledOnce();
+    expect(fixture.client.buyShares).toHaveBeenCalledWith({
+      marketAddress: plan.market.id,
+      outcomeIdx: plan.assessment.outcomeIndex,
+      sharesOut: 100n * 10n ** 18n,
+      maxTokensIn: plan.maximumCostAtomic,
+    });
+    expect(fixture.ledger.confirm).toHaveBeenCalledWith(
+      plan.decisionId,
+      `0x${"a".repeat(64)}`,
+    );
+  });
+
+  it("blocks a replay even when a later quote would have a different decision ID", () => {
+    expect(hasConfirmedExactResultExecution({
+      records: [{
+        decisionId: "1".repeat(64),
+        marketId: plan.market.id,
+        outcomeIndex: plan.assessment.outcomeIndex,
+        shares: 1,
+        quotedCostTst: 1,
+        assessmentEvidenceClass: "published_result",
+        status: "CONFIRMED",
+        createdAt: 1,
+        transactionHash: `0x${"2".repeat(64)}`,
+      }],
+      marketId: plan.market.id,
+      outcomeIndex: plan.assessment.outcomeIndex,
+    })).toBe(true);
+  });
+});
+
+describe("official-PnL tournament preflight", () => {
+  it("ignores inconsistent accountValue and uses official PnL plus guaranteed payout", async () => {
+    const base = candidate("9", 0.99, 0.132989);
+    const plan: QuotedPlan = {
+      ...base,
+      assessment: {
+        ...base.assessment,
+        evidenceClass: "published_result",
+        probability: 0.99,
+        observedAt: "2026-08-19T15:59:55.000Z",
+        expiresAt: "2026-08-19T16:05:00.000Z",
+      },
+      quotedAt: "2026-08-19T15:59:58.000Z",
+      shares: 5280.45,
+      quotedCostTst: 1176,
+      maximumCostTst: 1199.560337,
+      maximumCostAtomic: 1_199_560_337n,
+      averagePrice: 1176 / 5280.45,
+      maximumAveragePrice: 1199.560337 / 5280.45,
+      netEdge: 0.75,
+      priceImpact: 0.094,
+      worstCaseExpectedProfitTst: 4028,
+      mode: "full",
+      decisionId: "9".repeat(64),
+    };
+    const book = {
+      rawMarkets: [], rawPositions: [], markets: [base.market], positions: [],
+      availableTst: 1422.528949, gasEth: 1, deployedValueTst: 0, totalEquityTst: 1422.528949,
+    };
+    const snapshot = {
+      version: 1,
+      observedAt: "2026-08-19T15:59:40.000Z",
+      sourceUrl: "https://competition.delphi.fyi/",
+      third: {
+        rank: 3, address: `0x${"3".repeat(40)}`, name: "Third",
+        accountValue: 4339.9, cash: 100, pnl: 3638.812186,
+        tradesVolume: 1, tradesCount: 1,
+      },
+      conviction: {
+        rank: 30, address: "0x86bE235Bb9Aa6D9E2Cf89b2f4E9c90e1ecb7C781", name: "Conviction",
+        accountValue: 9999, cash: 1422.528949, pnl: 422.528949,
+        tradesVolume: 1, tradesCount: 26,
+      },
+      thirdPlacePnlTst: 3638.812186,
+      convictionPnlTst: 422.528949,
+      gapToThirdPnlTst: 3216.283237,
+    } as PodiumSnapshot;
+    const result = await preflightTournamentExactPlan({
+      client: { quoteBuy: vi.fn(async () => ({ tokensIn: 1_176_000_000n })) },
+      plan,
+      policy: tournamentPolicy,
+      book,
+      now: () => Date.parse("2026-08-19T16:00:00.000Z"),
+      loadPodium: vi.fn(async () => snapshot),
+    });
+    expect(result).toMatchObject({
+      allowed: true,
+      route: "direct_podium",
+      directProjectedPnlTst: 4503.418612,
+      requiredFinalPnlTst: 3938.812186,
+    });
   });
 });

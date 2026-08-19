@@ -30,6 +30,22 @@ ExecMainStartTimestamp=
 ExecMainExitTimestamp=
 InactiveEnterTimestamp=
 
+Id=delphi-podium.service
+ActiveState=inactive
+Result=success
+ExecMainStatus=0
+ExecMainStartTimestamp=Sun 2026-08-16 22:19:56 UTC
+ExecMainExitTimestamp=Sun 2026-08-16 22:19:58 UTC
+InactiveEnterTimestamp=Sun 2026-08-16 22:19:58 UTC
+
+Id=delphi-podium.timer
+ActiveState=active
+Result=success
+ExecMainStatus=0
+ExecMainStartTimestamp=
+ExecMainExitTimestamp=
+InactiveEnterTimestamp=
+
 Id=delphi-opportunities.service
 ActiveState=inactive
 Result=success

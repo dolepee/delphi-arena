@@ -12,8 +12,9 @@ Earn test-token PnL by acting on authoritative information before a shallow LMSR
 4. Refuse stale, low-confidence, non-authoritative, contradictory, or weak-edge assessments.
 5. Quote the exact share amount against the live LMSR.
 6. Recalculate edge after price impact and fees; halve size until constraints pass or refuse.
-7. Persist the intent, approve only the bounded maximum cost, submit once, and reconcile the receipt.
-8. Redeem settled winners and liquidate only when the SDK reports an eligible terminal state.
+7. For a deterministic tournament result, require a flat reconciled wallet and prove the maximum-cost payout clears fresh official third-place PnL by at least 300 TST.
+8. Persist the intent, approve only the bounded maximum cost, repeat the fresh book/quote/podium guard, submit once, and reconcile the receipt.
+9. Redeem settled winners and liquidate only when the SDK reports an eligible terminal state.
 
 Forecasts and published results are separate evidence classes. Forecasts retain the locked 8-point net-edge floor. A published result may use the 2-point floor only when the organizer-named authoritative source contains the exact target-date value and the adapter deterministically maps it to the contract outcome.
 
@@ -22,6 +23,8 @@ Full-live residual capacity below 5 TST is ignored. This prevents repeated dust 
 ## Priority
 
 Deterministic official releases and observable events have priority over forecasts. Before resolution, position size reflects uncertainty and LMSR depth. After a decisive primary-source release, speed and source integrity matter more than narrative complexity.
+
+For the final tournament window, the isolated exact-result profile can spend at most 1,350 TST, 95% of equity/cash, and 20 points of LMSR impact. It is unavailable to forecasts, schedules, canaries, nonflat books, stale quotes, stale leaderboards, or outcomes that do not clear the podium target. A confirmed published-result trade for the same market and outcome cannot be replayed from a later quote.
 
 The first locked forecast adapter is the NSIDC Arctic-extent market. It uses the latest official extent and the trailing 46 observations, applies only same-horizon historical changes, and estimates the threshold probability with Laplace smoothing. The rule, 8-point net-edge floor, and allocation limits were committed before organizer funding arrived.
 

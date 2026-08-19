@@ -18,6 +18,11 @@ export const policySchema = z.object({
   minimumFullOrderTst: z.number().positive().max(25),
   maximumPriceImpact: z.number().positive().max(0.2),
   maximumPublishedResultPriceImpact: z.number().positive().max(0.2),
+  maximumTournamentExactResultOrderTst: z.number().positive().max(1_350).optional(),
+  maximumTournamentEquityAllocationPct: z.number().positive().max(95).optional(),
+  minimumTournamentPodiumBufferTst: z.number().min(300).optional(),
+  maximumTournamentLeaderboardAgeSeconds: z.number().int().positive().max(60).optional(),
+  maximumTournamentQuoteAgeSeconds: z.number().int().positive().max(15).optional(),
   slippagePct: z.number().positive().max(5),
   exitSlippagePct: z.number().positive().max(5).optional(),
   minimumProfitTakeReturnPct: z.number().positive().max(50).optional(),
@@ -88,6 +93,7 @@ export interface Candidate {
 }
 
 export interface QuotedPlan extends Candidate {
+  quotedAt: string;
   shares: number;
   quotedCostTst: number;
   maximumCostTst: number;

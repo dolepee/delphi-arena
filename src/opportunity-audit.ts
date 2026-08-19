@@ -1,28 +1,15 @@
-import { readFile } from "node:fs/promises";
 import type { DelphiClient } from "@gensyn-ai/gensyn-delphi-sdk";
-import { z } from "zod";
 import { findQuotedPlan } from "./quote-plan.js";
 import type { Assessment, Candidate, Policy } from "./model.js";
 import type { Book } from "./runtime.js";
+import type { OpportunityDefinition } from "./opportunity-policy.js";
 
-const opportunitySchema = z.object({
-  marketId: z.string().regex(/^0x[0-9a-fA-F]{40}$/u),
-  classification: z.enum(["result_capable", "partial_result", "forecast_only", "abstain"]),
-  resultCapableOutcomes: z.array(z.number().int().nonnegative()),
-  earliestDecisiveAt: z.string().datetime().nullable(),
-  rationale: z.string().min(20),
-});
-
-const opportunitiesSchema = z.object({
-  version: z.literal(1),
-  markets: z.array(opportunitySchema),
-});
-
-export type OpportunityDefinition = z.infer<typeof opportunitySchema>;
-
-export async function loadOpportunities(path: string): Promise<OpportunityDefinition[]> {
-  return opportunitiesSchema.parse(JSON.parse(await readFile(path, "utf8"))).markets;
-}
+export {
+  allowedOpportunityAssessments,
+  isAssessmentAllowedByOpportunity,
+  loadOpportunities,
+} from "./opportunity-policy.js";
+export type { OpportunityDefinition } from "./opportunity-policy.js";
 
 function hypotheticalAssessment(
   marketId: `0x${string}`,

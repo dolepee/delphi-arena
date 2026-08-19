@@ -138,6 +138,8 @@ export function evaluateReliability(input: {
   };
   checkTimer("delphi-event.timer");
   checkUnit("delphi-event.service", 60_000);
+  checkTimer("delphi-podium.timer");
+  checkUnit("delphi-podium.service", 45_000);
   checkTimer("delphi-opportunities.timer");
   checkUnit("delphi-opportunities.service", 180_000);
   checkTimer("delphi-settle.timer");
