@@ -225,6 +225,84 @@ describe("production-shaped event cycle", () => {
     expect(fixture.value.trade).not.toHaveBeenCalled();
   });
 
+  it("refreshes exact evidence and manages an aligned winner without attempting another buy", async () => {
+    const heldYes = { marketId: MARKET_ID, outcomeIndex: 0, shares: 100, markPrice: 0.95 };
+    const fixture = dependencies({
+      readBook: vi.fn()
+        .mockResolvedValueOnce(book())
+        .mockResolvedValueOnce(book({ positions: [heldYes] })),
+      managePositions: vi.fn(async () => ({ status: "SOLD", reason: "PROFIT_TAKE" })),
+    });
+    await expect(runEventCycle(fixture.value)).resolves.toMatchObject({
+      status: "EVENT_POSITION_MANAGEMENT_ONLY",
+      management: { status: "SOLD", reason: "PROFIT_TAKE" },
+    });
+    expect(fixture.value.saveAssessments).toHaveBeenCalledOnce();
+    expect(vi.mocked(fixture.value.saveAssessments).mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(fixture.value.managePositions).mock.invocationCallOrder[0]!);
+    expect(fixture.value.managePositions).toHaveBeenCalledOnce();
+    expect(fixture.value.managePositions).toHaveBeenCalledWith(
+      fixture.value.client,
+      NOW,
+      { targetPositions: [{ marketId: MARKET_ID, outcomeIndex: 0 }] },
+    );
+    expect(fixture.value.quoteCandidates).not.toHaveBeenCalled();
+    expect(fixture.value.preflightTournamentPlans).not.toHaveBeenCalled();
+    expect(fixture.value.trade).not.toHaveBeenCalled();
+  });
+
+  it("keeps an aligned winner when the conservative profit-take rule does not clear", async () => {
+    const heldYes = { marketId: MARKET_ID, outcomeIndex: 0, shares: 100, markPrice: 0.8 };
+    const fixture = dependencies({
+      readBook: vi.fn()
+        .mockResolvedValueOnce(book())
+        .mockResolvedValueOnce(book({ positions: [heldYes] })),
+      managePositions: vi.fn(async () => ({
+        status: "NO_EXIT",
+        reason: "no fresh evidence flip or converged profitable position",
+      })),
+    });
+    await expect(runEventCycle(fixture.value)).resolves.toMatchObject({
+      status: "EVENT_POSITION_MANAGEMENT_ONLY",
+      management: { status: "NO_EXIT" },
+    });
+    expect(fixture.value.saveAssessments).toHaveBeenCalledOnce();
+    expect(fixture.value.managePositions).toHaveBeenCalledOnce();
+    expect(fixture.value.trade).not.toHaveBeenCalled();
+  });
+
+  it("prioritizes an opposing exact position over aligned-winner management", async () => {
+    const heldYes = { marketId: MARKET_ID, outcomeIndex: 0, shares: 40, markPrice: 0.9 };
+    const heldNo = { marketId: MARKET_ID, outcomeIndex: 1, shares: 60, markPrice: 0.1 };
+    const fixture = dependencies({
+      readBook: vi.fn()
+        .mockResolvedValueOnce(book())
+        .mockResolvedValueOnce(book({ positions: [heldYes, heldNo] })),
+      managePositions: vi.fn(async () => ({ status: "SOLD", reason: "EVIDENCE_FLIP" })),
+    });
+    await expect(runEventCycle(fixture.value)).resolves.toMatchObject({
+      status: "EVENT_POSITION_EXIT_ONLY",
+      management: { status: "SOLD", reason: "EVIDENCE_FLIP" },
+    });
+    expect(fixture.quoteSell).toHaveBeenCalledOnce();
+    expect(fixture.quoteSell).toHaveBeenCalledWith({
+      marketAddress: MARKET_ID,
+      outcomeIdx: 1,
+      sharesIn: 60n * 10n ** 18n,
+    });
+    expect(fixture.value.quoteCandidates).toHaveBeenCalledOnce();
+    expect(fixture.value.managePositions).toHaveBeenCalledOnce();
+    expect(fixture.value.managePositions).toHaveBeenCalledWith(
+      fixture.value.client,
+      NOW,
+      {
+        allowStaleProfitTake: true,
+        targetPositions: [{ marketId: MARKET_ID, outcomeIndex: 1 }],
+      },
+    );
+    expect(fixture.value.trade).not.toHaveBeenCalled();
+  });
+
   it("never rotates unrelated inventory inside the exact-result entry cycle", async () => {
     const profitable = { marketId: OTHER_ID, outcomeIndex: 0, shares: 50, markPrice: 0.9 };
     const fixture = dependencies({

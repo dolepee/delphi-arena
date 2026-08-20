@@ -40,7 +40,10 @@ export interface EventCycleDependencies {
     policy: Policy;
   }) => Promise<{ plans: QuotedPlan[]; failures: string[] }>;
   saveAssessments: (assessments: Assessment[]) => Promise<void>;
-  managePositions: (client: DelphiClient, now: number, options?: { allowStaleProfitTake?: boolean }) => Promise<unknown>;
+  managePositions: (client: DelphiClient, now: number, options?: {
+    allowStaleProfitTake?: boolean;
+    targetPositions?: Array<{ marketId: string; outcomeIndex: number }>;
+  }) => Promise<unknown>;
   trade: (client: DelphiClient, now: number) => Promise<unknown>;
 }
 
@@ -132,6 +135,34 @@ export async function runEventCycle(dependencies: EventCycleDependencies): Promi
     const outcomeIndex = exactOutcomes.get(position.marketId.toLowerCase());
     return outcomeIndex !== undefined && outcomeIndex !== position.outcomeIndex;
   });
+  const alignedPositions = book.positions.filter((position) =>
+    exactOutcomes.get(position.marketId.toLowerCase()) === position.outcomeIndex
+  );
+  if (opposingPositions.length === 0 && alignedPositions.length > 0) {
+    // Refresh the short-lived exact assessment before managing the captured
+    // winner. This keeps the existing conservative profit-take rule operable
+    // without a second timer competing with the event lane for the write lock.
+    // A new entry still waits for a later flat, reconciled cycle.
+    await dependencies.saveAssessments(activeAssessments);
+    const management = await dependencies.managePositions(
+      dependencies.client,
+      dependencies.now(),
+      {
+        targetPositions: alignedPositions.map(({ marketId, outcomeIndex }) => ({
+          marketId,
+          outcomeIndex,
+        })),
+      },
+    );
+    const completedAt = dependencies.now();
+    return {
+      status: "EVENT_POSITION_MANAGEMENT_ONLY",
+      startedAt: timestamp(startedAt),
+      completedAt: timestamp(completedAt),
+      latencyMs: { total: completedAt - startedAt },
+      management,
+    };
+  }
   let projectedAvailableTst = book.availableTst;
   let projectedDeployedValueTst = book.deployedValueTst;
   for (const position of opposingPositions) {
@@ -183,7 +214,13 @@ export async function runEventCycle(dependencies: EventCycleDependencies): Promi
     const management = await dependencies.managePositions(
       dependencies.client,
       dependencies.now(),
-      { allowStaleProfitTake: true },
+      {
+        allowStaleProfitTake: true,
+        targetPositions: opposingPositions.map(({ marketId, outcomeIndex }) => ({
+          marketId,
+          outcomeIndex,
+        })),
+      },
     );
     const completedAt = dependencies.now();
     return {

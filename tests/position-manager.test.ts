@@ -97,6 +97,20 @@ describe("position exit policy", () => {
     })).toBeNull();
   });
 
+  it("applies the two-point exact-result hold-edge boundary inclusively", () => {
+    const exact = { ...assessment, probability: 0.99, evidenceClass: "published_result" as const };
+    const common = {
+      position,
+      assessment: exact,
+      entryProbability: null,
+      averageCostPerShare: 0.2,
+      minimumProfitTakeReturnPct: 3,
+      maximumHoldEdgeForProfitTake: 0.02,
+    };
+    expect(exitReason({ ...common, minimumProceedsTst: 96.9999 })).toBeNull();
+    expect(exitReason({ ...common, minimumProceedsTst: 97 })).toBe("PROFIT_TAKE");
+  });
+
   it("does not profit-take without a known cost basis", () => {
     expect(exitReason({
       position,

@@ -67,7 +67,8 @@ export function exitReason(input: {
   const averageExitPrice = input.minimumProceedsTst / input.position.shares;
   const returnPct = (averageExitPrice / input.averageCostPerShare - 1) * 100;
   const holdEdge = probability - averageExitPrice;
-  return returnPct >= input.minimumProfitTakeReturnPct && holdEdge <= input.maximumHoldEdgeForProfitTake
+  return returnPct >= input.minimumProfitTakeReturnPct &&
+    holdEdge <= input.maximumHoldEdgeForProfitTake + 1e-12
     ? "PROFIT_TAKE"
     : null;
 }
@@ -187,7 +188,10 @@ export function positionLedgerGeneration(input: {
 export async function runPositionManagementCycle(
   client: DelphiClient,
   now = Date.now(),
-  options: { allowStaleProfitTake?: boolean } = {},
+  options: {
+    allowStaleProfitTake?: boolean;
+    targetPositions?: Array<{ marketId: string; outcomeIndex: number }>;
+  } = {},
 ) {
   const [policy, assessments, book] = await Promise.all([loadPolicy(), loadAssessments(), readBook(client)]);
   await assertMaintenanceReadiness(book);
@@ -206,7 +210,16 @@ export async function runPositionManagementCycle(
   const buys = await tradeLedger.records();
   const exits = await exitLedger.records();
 
+  const targetPositionKeys = options.targetPositions === undefined
+    ? null
+    : new Set(options.targetPositions.map(({ marketId, outcomeIndex }) =>
+      `${marketId.toLowerCase()}:${outcomeIndex}`
+    ));
   for (const position of book.positions) {
+    if (
+      targetPositionKeys !== null &&
+      !targetPositionKeys.has(`${position.marketId.toLowerCase()}:${position.outcomeIndex}`)
+    ) continue;
     const market = book.markets.find((candidate) => candidate.id.toLowerCase() === position.marketId.toLowerCase());
     if (!market || market.status !== "open") continue;
     const assessment = assessmentForPosition({ assessments, position, market, policy, now });
