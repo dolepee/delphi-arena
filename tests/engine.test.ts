@@ -380,10 +380,16 @@ describe("guarded tournament execution", () => {
 });
 
 describe("official-PnL tournament preflight", () => {
-  it("ignores inconsistent accountValue and uses official PnL plus guaranteed payout", async () => {
+  it("ignores inconsistent accountValue and uses official PnL plus the maximum-cost winning payout floor", async () => {
     const base = candidate("9", 0.99, 0.132989);
+    const freshMarket = {
+      ...base.market,
+      resolvesAt: "2026-08-21T03:59:00.000Z",
+      settlesAt: "2026-08-23T03:59:00.000Z",
+    };
     const plan: QuotedPlan = {
       ...base,
+      market: freshMarket,
       assessment: {
         ...base.assessment,
         evidenceClass: "published_result",
@@ -405,7 +411,7 @@ describe("official-PnL tournament preflight", () => {
       decisionId: "9".repeat(64),
     };
     const book = {
-      rawMarkets: [], rawPositions: [], markets: [base.market], positions: [],
+      rawMarkets: [], rawPositions: [], markets: [freshMarket], positions: [],
       availableTst: 1422.528949, gasEth: 1, deployedValueTst: 0, totalEquityTst: 1422.528949,
     };
     const snapshot = {
@@ -439,6 +445,143 @@ describe("official-PnL tournament preflight", () => {
       route: "direct_podium",
       directProjectedPnlTst: 4503.418612,
       requiredFinalPnlTst: 3938.812186,
+    });
+  });
+
+  it("uses the fresh SDK settlement timestamp to admit a near-podium Gemini-sized exact win", async () => {
+    const base = candidate("8", 0.99, 0.14);
+    const planMarket = {
+      ...base.market,
+      resolvesAt: "2026-08-21T03:59:00.000Z",
+    };
+    const freshMarket = {
+      ...planMarket,
+      settlesAt: "2026-08-23T03:59:00.000Z",
+    };
+    const plan: QuotedPlan = {
+      ...base,
+      market: planMarket,
+      assessment: {
+        ...base.assessment,
+        evidenceClass: "published_result",
+        probability: 0.99,
+        observedAt: "2026-08-19T15:59:55.000Z",
+        expiresAt: "2026-08-19T16:05:00.000Z",
+      },
+      quotedAt: "2026-08-19T15:59:58.000Z",
+      shares: 4737,
+      quotedCostTst: 1320,
+      maximumCostTst: 1348,
+      maximumCostAtomic: 1_348_000_000n,
+      averagePrice: 1320 / 4737,
+      maximumAveragePrice: 1348 / 4737,
+      netEdge: 0.99 - 1348 / 4737,
+      priceImpact: 1348 / 4737 - 0.14,
+      worstCaseExpectedProfitTst: 4737 * 0.99 - 1348,
+      mode: "full",
+      decisionId: "8".repeat(64),
+    };
+    const book = {
+      rawMarkets: [], rawPositions: [], markets: [freshMarket], positions: [],
+      availableTst: 1422.528949, gasEth: 1, deployedValueTst: 0, totalEquityTst: 1422.528949,
+    };
+    const snapshot = {
+      version: 1,
+      observedAt: "2026-08-19T15:59:40.000Z",
+      sourceUrl: "https://competition.delphi.fyi/",
+      third: {
+        rank: 3, address: `0x${"3".repeat(40)}`, name: "Third",
+        accountValue: 5315, cash: 100, pnl: 4315,
+        tradesVolume: 1, tradesCount: 1,
+      },
+      conviction: {
+        rank: 30, address: "0x86bE235Bb9Aa6D9E2Cf89b2f4E9c90e1ecb7C781", name: "Conviction",
+        accountValue: 1422.528949, cash: 1422.528949, pnl: 422.528949,
+        tradesVolume: 1, tradesCount: 26,
+      },
+      thirdPlacePnlTst: 4315,
+      convictionPnlTst: 422.528949,
+      gapToThirdPnlTst: 3892.471051,
+    } as PodiumSnapshot;
+    const result = await preflightTournamentExactPlan({
+      client: { quoteBuy: vi.fn(async () => ({ tokensIn: 1_320_000_000n })) },
+      plan,
+      policy: tournamentPolicy,
+      book,
+      now: () => Date.parse("2026-08-19T16:00:00.000Z"),
+      loadPodium: vi.fn(async () => snapshot),
+    });
+    expect(result).toMatchObject({
+      allowed: true,
+      route: "near_podium_exact",
+      freshQuotedCostTst: 1320,
+    });
+    expect(result.allowed && result.directProjectedPnlTst).toBeCloseTo(3811.528949);
+  });
+
+  it("fails the near-podium preflight closed when the fresh market omits settlement time", async () => {
+    const base = candidate("7", 0.99, 0.14);
+    const freshMarket = {
+      ...base.market,
+      resolvesAt: "2026-08-21T03:59:00.000Z",
+      settlesAt: null,
+    };
+    const plan: QuotedPlan = {
+      ...base,
+      market: freshMarket,
+      assessment: {
+        ...base.assessment,
+        evidenceClass: "published_result",
+        probability: 0.99,
+        observedAt: "2026-08-19T15:59:55.000Z",
+        expiresAt: "2026-08-19T16:05:00.000Z",
+      },
+      quotedAt: "2026-08-19T15:59:58.000Z",
+      shares: 4737,
+      quotedCostTst: 1320,
+      maximumCostTst: 1348,
+      maximumCostAtomic: 1_348_000_000n,
+      averagePrice: 1320 / 4737,
+      maximumAveragePrice: 1348 / 4737,
+      netEdge: 0.99 - 1348 / 4737,
+      priceImpact: 1348 / 4737 - 0.14,
+      worstCaseExpectedProfitTst: 4737 * 0.99 - 1348,
+      mode: "full",
+      decisionId: "7".repeat(64),
+    };
+    const book = {
+      rawMarkets: [], rawPositions: [], markets: [freshMarket], positions: [],
+      availableTst: 1422.528949, gasEth: 1, deployedValueTst: 0, totalEquityTst: 1422.528949,
+    };
+    const snapshot = {
+      version: 1,
+      observedAt: "2026-08-19T15:59:40.000Z",
+      sourceUrl: "https://competition.delphi.fyi/",
+      third: {
+        rank: 3, address: `0x${"3".repeat(40)}`, name: "Third",
+        accountValue: 5315, cash: 100, pnl: 4315,
+        tradesVolume: 1, tradesCount: 1,
+      },
+      conviction: {
+        rank: 30, address: "0x86bE235Bb9Aa6D9E2Cf89b2f4E9c90e1ecb7C781", name: "Conviction",
+        accountValue: 1422.528949, cash: 1422.528949, pnl: 422.528949,
+        tradesVolume: 1, tradesCount: 26,
+      },
+      thirdPlacePnlTst: 4315,
+      convictionPnlTst: 422.528949,
+      gapToThirdPnlTst: 3892.471051,
+    } as PodiumSnapshot;
+    await expect(preflightTournamentExactPlan({
+      client: { quoteBuy: vi.fn(async () => ({ tokensIn: 1_320_000_000n })) },
+      plan,
+      policy: tournamentPolicy,
+      book,
+      now: () => Date.parse("2026-08-19T16:00:00.000Z"),
+      loadPodium: vi.fn(async () => snapshot),
+    })).resolves.toEqual({
+      allowed: false,
+      reason: "settlement_missing_or_invalid",
+      freshQuotedCostTst: 1320,
     });
   });
 });

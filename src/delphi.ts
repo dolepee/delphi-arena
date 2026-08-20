@@ -24,6 +24,7 @@ export function marketToView(market: Market): MarketView {
     outcomes,
     status: market.status,
     resolvesAt: market.resolvesAt,
+    settlesAt: market.settlesAt,
     prices,
     tradingFeePct: market.tradingFee ? Number(market.tradingFee) / 1e16 : 0,
     dataSources: market.dataSources,
