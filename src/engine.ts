@@ -104,6 +104,7 @@ export async function preflightTournamentExactPlan(input: {
       shares: input.plan.shares,
       maximumCostTst: input.plan.maximumCostTst,
       priceImpact: input.plan.maximumAveragePrice - freshSpot,
+      settlesAt: freshMarket.settlesAt ?? null,
       assessment: input.plan.assessment,
     },
   });

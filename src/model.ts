@@ -69,6 +69,7 @@ export interface MarketView {
   outcomes: string[];
   status: string;
   resolvesAt: string | null;
+  settlesAt?: string | null;
   prices: number[];
   tradingFeePct: number;
   dataSources: unknown;
