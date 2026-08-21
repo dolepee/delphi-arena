@@ -8,6 +8,7 @@ export const ABSOLUTE_TOURNAMENT_QUOTE_AGE_SECONDS = 15;
 export const MINIMUM_TOURNAMENT_PODIUM_BUFFER_TST = 300;
 export const MINIMUM_NEAR_PODIUM_EXACT_PROFIT_TST = 500;
 export const NEAR_PODIUM_EXACT_TARGET_FRACTION = 0.25;
+export const MATERIAL_EXACT_PODIUM_GAP_FRACTION = 0.5;
 export const MINIMUM_NEAR_PODIUM_SETTLEMENT_LEAD_MS = 18 * 60 * 60 * 1_000;
 const BOOK_RECONCILIATION_TOLERANCE_TST = 0.1;
 
@@ -73,9 +74,11 @@ export type TournamentGuardReason =
   | "paired_branch_stale"
   | "near_podium_profit_too_small"
   | "near_podium_deficit_too_large"
+  | "material_exact_profit_too_small"
   | "settlement_missing_or_invalid"
   | "settlement_after_competition"
   | "settlement_too_late_for_near_podium"
+  | "settlement_too_late_for_material_exact"
   | "podium_target_not_cleared";
 
 export type TournamentGuardDecision = {
@@ -83,7 +86,7 @@ export type TournamentGuardDecision = {
   reason: TournamentGuardReason;
 } | {
   allowed: true;
-  route: "direct_podium" | "verified_paired_branch" | "near_podium_exact";
+  route: "direct_podium" | "verified_paired_branch" | "near_podium_exact" | "material_exact";
   maximumAuthorizedCostTst: number;
   podiumTargetPnlTst: number;
   requiredFinalPnlTst: number;
@@ -389,17 +392,46 @@ export function guardTournamentExactResult(input: {
     0,
     podiumTargetPnlTst - directProjectedPnlTst,
   );
-  if (podiumDeficitTst > maximumNearPodiumDeficitTst) {
-    return { allowed: false, reason: "near_podium_deficit_too_large" };
+  const settlesWithFallbackLead =
+    settlesAt <= competitionEndsAt - MINIMUM_NEAR_PODIUM_SETTLEMENT_LEAD_MS;
+  if (
+    winningPayoutProfitFloorTst >= MINIMUM_NEAR_PODIUM_EXACT_PROFIT_TST &&
+    podiumDeficitTst <= maximumNearPodiumDeficitTst
+  ) {
+    if (!settlesWithFallbackLead) {
+      return { allowed: false, reason: "settlement_too_late_for_near_podium" };
+    }
+    return {
+      allowed: true,
+      route: "near_podium_exact",
+      maximumAuthorizedCostTst,
+      podiumTargetPnlTst,
+      requiredFinalPnlTst,
+      directProjectedFinalEquityTst,
+      directProjectedPnlTst,
+      projectedFinalEquityTst: directProjectedFinalEquityTst,
+      projectedPnlTst: directProjectedPnlTst,
+    };
   }
 
-  if (settlesAt > competitionEndsAt - MINIMUM_NEAR_PODIUM_SETTLEMENT_LEAD_MS) {
-    return { allowed: false, reason: "settlement_too_late_for_near_podium" };
+  const podiumGapFromCurrentPnlTst = Math.max(
+    0,
+    podiumTargetPnlTst - input.leaderboard.convictionPnlTst,
+  );
+  const minimumMaterialExactProfitTst = Math.max(
+    MINIMUM_NEAR_PODIUM_EXACT_PROFIT_TST,
+    podiumGapFromCurrentPnlTst * MATERIAL_EXACT_PODIUM_GAP_FRACTION,
+  );
+  if (quote.shares < quote.maximumCostTst + minimumMaterialExactProfitTst) {
+    return { allowed: false, reason: "material_exact_profit_too_small" };
+  }
+  if (!settlesWithFallbackLead) {
+    return { allowed: false, reason: "settlement_too_late_for_material_exact" };
   }
 
   return {
     allowed: true,
-    route: "near_podium_exact",
+    route: "material_exact",
     maximumAuthorizedCostTst,
     podiumTargetPnlTst,
     requiredFinalPnlTst,
