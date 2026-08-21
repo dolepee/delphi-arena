@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { policySchema, type Assessment, type Policy } from "../src/model.js";
 import {
   guardTournamentExactResult,
+  MATERIAL_EXACT_PODIUM_GAP_FRACTION,
   maximumTournamentExactResultCost,
   type TournamentExactQuote,
   type VerifiedPairedBranchTarget,
@@ -134,7 +135,7 @@ describe("podium tournament guard", () => {
     expect(result.allowed && result.directProjectedPnlTst).toBeCloseTo(4503.418612);
   });
 
-  it("uses the higher projected target for direct podium before considering the live-gap fallback", () => {
+  it("keeps near-podium ahead of material-exact when both fallbacks qualify", () => {
     expect(guardTournamentExactResult({
       policy: POLICY,
       now: NOW,
@@ -144,14 +145,14 @@ describe("podium tournament guard", () => {
     })).toMatchObject({ allowed: true, route: "near_podium_exact" });
   });
 
-  it("rejects the fallback when a higher projected podium target leaves too large a deficit", () => {
+  it("rejects material-exact when a higher projected podium target makes its profit immaterial", () => {
     expect(guardTournamentExactResult({
       policy: POLICY,
       now: NOW,
       book: BOOK,
       leaderboard: { ...LEADERBOARD, projectedThirdPlacePnlTst: 10_000 },
       quote: QUOTE,
-    })).toEqual({ allowed: false, reason: "near_podium_deficit_too_large" });
+    })).toEqual({ allowed: false, reason: "material_exact_profit_too_small" });
   });
 
   it("keeps direct podium first when the quote also satisfies the near-podium fallback", () => {
@@ -364,7 +365,7 @@ describe("podium tournament guard", () => {
     expect(result.allowed && result.directProjectedPnlTst).toBeCloseTo(3811.528949);
   });
 
-  it("rejects a UAP-sized exact win that still leaves more than the principled live-podium deficit", () => {
+  it("rejects a UAP-sized exact win below half of the fresh podium gap", () => {
     expect(guardTournamentExactResult({
       policy: POLICY,
       now: NOW,
@@ -377,10 +378,108 @@ describe("podium tournament guard", () => {
         priceImpact: 0.15,
         settlesAt: "2026-08-23T03:59:00.000Z",
       },
-    })).toEqual({ allowed: false, reason: "near_podium_deficit_too_large" });
+    })).toEqual({ allowed: false, reason: "material_exact_profit_too_small" });
   });
 
-  it("rejects a Section-sized exact win whose maximum-cost payout profit is below 500 TST", () => {
+  it("admits the current UAP quote through the bounded material-exact route", () => {
+    const now = Date.parse("2026-08-21T06:39:00.000Z");
+    const assessment: Assessment = {
+      ...ASSESSMENT,
+      observedAt: "2026-08-21T06:38:55.000Z",
+      expiresAt: "2026-08-21T06:45:00.000Z",
+      sources: [{
+        ...ASSESSMENT.sources[0]!,
+        observedAt: "2026-08-21T06:38:54.000Z",
+      }],
+    };
+    const policy = { ...POLICY, competitionEndsAt: "2026-08-24T13:00:00.000Z" };
+    const leaderboard = {
+      ...LEADERBOARD,
+      observedAt: "2026-08-21T06:38:30.000Z",
+      liveThirdPlacePnlTst: 7074.493784,
+    };
+    const quote = {
+      ...QUOTE,
+      observedAt: "2026-08-21T06:38:58.000Z",
+      shares: 4577.5,
+      maximumCostTst: 1176.591,
+      priceImpact: 0.15,
+      settlesAt: "2026-08-23T14:00:00.000Z",
+      assessment,
+    };
+    const result = guardTournamentExactResult({
+      policy,
+      now,
+      book: BOOK,
+      leaderboard,
+      quote,
+    });
+    expect(result).toMatchObject({
+      allowed: true,
+      route: "material_exact",
+      podiumTargetPnlTst: 7074.493784,
+    });
+    expect(result.allowed && result.directProjectedPnlTst).toBeCloseTo(3823.437949);
+    expect(quote.shares - quote.maximumCostTst).toBeGreaterThanOrEqual(
+      (leaderboard.liveThirdPlacePnlTst - LEADERBOARD.convictionPnlTst) *
+        MATERIAL_EXACT_PODIUM_GAP_FRACTION,
+    );
+
+    const exactHalfGapTst =
+      (leaderboard.liveThirdPlacePnlTst - leaderboard.convictionPnlTst) *
+      MATERIAL_EXACT_PODIUM_GAP_FRACTION;
+    expect(guardTournamentExactResult({
+      policy,
+      now,
+      book: BOOK,
+      leaderboard,
+      quote: {
+        ...quote,
+        shares: quote.maximumCostTst + exactHalfGapTst,
+      },
+    })).toMatchObject({ allowed: true, route: "material_exact" });
+    expect(guardTournamentExactResult({
+      policy,
+      now,
+      book: BOOK,
+      leaderboard,
+      quote: {
+        ...quote,
+        shares: quote.maximumCostTst + exactHalfGapTst - 0.000001,
+      },
+    })).toEqual({ allowed: false, reason: "material_exact_profit_too_small" });
+  });
+
+  it("uses the higher projected target for the material-exact profit floor", () => {
+    const liveThirdPlacePnlTst = LEADERBOARD.convictionPnlTst + 4000;
+    const projectedThirdPlacePnlTst = LEADERBOARD.convictionPnlTst + 6000;
+    const quote = {
+      ...QUOTE,
+      shares: 3500,
+      maximumCostTst: 1000,
+      priceImpact: 0.1,
+    };
+    expect(guardTournamentExactResult({
+      policy: POLICY,
+      now: NOW,
+      book: BOOK,
+      leaderboard: { ...LEADERBOARD, liveThirdPlacePnlTst },
+      quote,
+    })).toMatchObject({ allowed: true, route: "material_exact" });
+    expect(guardTournamentExactResult({
+      policy: POLICY,
+      now: NOW,
+      book: BOOK,
+      leaderboard: {
+        ...LEADERBOARD,
+        liveThirdPlacePnlTst,
+        projectedThirdPlacePnlTst,
+      },
+      quote,
+    })).toEqual({ allowed: false, reason: "material_exact_profit_too_small" });
+  });
+
+  it("preserves the absolute 500 TST floor for a Section-sized exact win", () => {
     expect(guardTournamentExactResult({
       policy: POLICY,
       now: NOW,
@@ -396,8 +495,9 @@ describe("podium tournament guard", () => {
     })).toEqual({ allowed: false, reason: "near_podium_profit_too_small" });
   });
 
-  it("accepts exactly 500 TST of payout profit and rejects the first amount below it", () => {
+  it("accepts the exact 50% gap boundary and rejects the first amount below it", () => {
     const leaderboard = { ...LEADERBOARD, liveThirdPlacePnlTst: 1422.528949 };
+    expect(MATERIAL_EXACT_PODIUM_GAP_FRACTION).toBe(0.5);
     expect(guardTournamentExactResult({
       policy: POLICY,
       now: NOW,
@@ -414,7 +514,25 @@ describe("podium tournament guard", () => {
     })).toEqual({ allowed: false, reason: "near_podium_profit_too_small" });
   });
 
-  it("accepts the exact residual-gap boundary and rejects the first amount beyond it", () => {
+  it("does not let a tiny podium gap admit a trivial exact payout", () => {
+    expect(guardTournamentExactResult({
+      policy: POLICY,
+      now: NOW,
+      book: BOOK,
+      leaderboard: {
+        ...LEADERBOARD,
+        liveThirdPlacePnlTst: LEADERBOARD.convictionPnlTst + 100,
+      },
+      quote: {
+        ...QUOTE,
+        shares: 200,
+        maximumCostTst: 100,
+        priceImpact: 0.1,
+      },
+    })).toEqual({ allowed: false, reason: "near_podium_profit_too_small" });
+  });
+
+  it("keeps near-podium at its residual-gap boundary, then falls through to material-exact", () => {
     const leaderboard = { ...LEADERBOARD, liveThirdPlacePnlTst: 4315 };
     expect(guardTournamentExactResult({
       policy: POLICY,
@@ -439,7 +557,7 @@ describe("podium tournament guard", () => {
         maximumCostTst: 1000,
         priceImpact: 0.1,
       },
-    })).toEqual({ allowed: false, reason: "near_podium_deficit_too_large" });
+    })).toMatchObject({ allowed: true, route: "material_exact" });
   });
 
   it("rejects near-podium wins that cannot settle at least 18 hours before competition end", () => {
@@ -456,6 +574,34 @@ describe("podium tournament guard", () => {
         settlesAt: "2026-08-23T06:00:00.000Z",
       },
     })).toEqual({ allowed: false, reason: "settlement_too_late_for_near_podium" });
+  });
+
+  it("applies the same inclusive 18-hour settlement lead to material-exact", () => {
+    const leaderboard = {
+      ...LEADERBOARD,
+      liveThirdPlacePnlTst: LEADERBOARD.convictionPnlTst + 6000,
+    };
+    const quote = {
+      ...QUOTE,
+      shares: 4100,
+      maximumCostTst: 1000,
+      priceImpact: 0.1,
+      settlesAt: "2026-08-23T05:59:00.000Z",
+    };
+    expect(guardTournamentExactResult({
+      policy: POLICY,
+      now: NOW,
+      book: BOOK,
+      leaderboard,
+      quote,
+    })).toMatchObject({ allowed: true, route: "material_exact" });
+    expect(guardTournamentExactResult({
+      policy: POLICY,
+      now: NOW,
+      book: BOOK,
+      leaderboard,
+      quote: { ...quote, settlesAt: "2026-08-23T06:00:00.000Z" },
+    })).toEqual({ allowed: false, reason: "settlement_too_late_for_material_exact" });
   });
 
   it("accepts the exact 18-hour settlement boundary", () => {

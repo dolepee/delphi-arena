@@ -12,12 +12,12 @@ Registered wallet: `0x86bE235Bb9Aa6D9E2Cf89b2f4E9c90e1ecb7C781`
 - A decisive official schedule must retain at least 4 percentage points and must expose both the named event and a machine-readable date after the contract deadline.
 - An exact result already published by the organizer-named source must retain at least 2 percentage points; forecasts cannot use this tighter floor.
 - Market, portfolio, order, slippage, and price-impact caps are enforced before signing.
-- Tournament exact-result sizing is isolated from forecasts and requires fresh official-PnL, settlement, and quote guards before and after approval; a bounded early-settling near-podium route is available when a single exact win no longer clears the full podium buffer.
+- Tournament exact-result sizing is isolated from forecasts and requires fresh official-PnL, settlement, and quote guards before and after approval. After direct, verified-paired, and near-podium routes fail, an early-settling deterministic result is eligible only when its winning payout profit is at least 500 TST and at least half of the fresh conservative podium gap.
 - Full-live orders below 5 TST are refused to prevent repeated fee-wasting residual fills.
 - A prepared intent is written before the approval or buy transaction. Any uncertain write blocks further writes.
 - Runtime starts write-disabled. Canary mode additionally requires the exact live confirmation and an operator-created approval file.
 - The first canary is capped at 1 TST and automatically blocks further entries until full-live approval exists.
-- No fallback or minimum-activity trade is permitted.
+- No qualification-fallback or minimum-activity trade is permitted.
 
 ## Commands
 
